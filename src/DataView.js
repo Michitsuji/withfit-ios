@@ -2,7 +2,7 @@
 // DataView.js — データ画面（カレンダー・グラフ・月間レポート・体組成・種目成長率チャート）
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Sparkles, TrendingUp, X, Award, Users, User } from 'lucide-react';
+import { TrendingUp, X, Award, Users, User } from 'lucide-react';
 import { formatDateFromTimestamp, MUSCLE_CATEGORIES, getCategoryColor, getAge, getBMR, getFFMI, getFFMIEval, calcSetVolume } from './utils';
 import { UserAvatar, renderUsernameWithBadge, SimpleChart } from './CommonUI';
 import { WorkoutCard } from './WorkoutCard';
@@ -159,7 +159,7 @@ function BodyCompositionInfo({ info, dailyCalories = 0, dateLabel = '' }) {
 }
 
 // --- データ画面 (カレンダー・グラフ・レポート) ---
-function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport, onImportItem, targetUser, onToggleLike, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, onOpenCoach }) {
+function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport, onImportItem, targetUser, onToggleLike, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDateStr, setSelectedDateStr] = useState(formatDateFromTimestamp(Date.now()));
   const displayUser = targetUser || currentUser;
@@ -343,15 +343,7 @@ function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">データ</h2>
 
-      {onOpenCoach && (
-      <button 
-        onClick={onOpenCoach} 
-        className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-bold py-4 rounded-2xl shadow-md flex items-center justify-center gap-2 mb-6 hover:opacity-90 transition-opacity"
-      >
-        <Sparkles size={20} />
-        AI専属コーチに相談・台帳管理
-      </button>
-      )}
+
 
       <div>
         <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">月間レポート ({month + 1}月)</h3>

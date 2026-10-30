@@ -580,7 +580,9 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
       const hasOnlyEmpty = prev.length === 1 && !prev[0].exerciseName && prev[0].sets.length === 1 && !prev[0].sets[0].weight && !prev[0].sets[0].reps;
       return hasOnlyEmpty ? [newItem] : [...prev, newItem];
     });
-    alert("今日のメニューに追加しました！そのまま「トレーニング開始」を押して記録できます。");
+    triggerHaptic('success');
+    setShowDashboard(false);
+    alert("本日の記録メニューに追加しました！");
   };
 
   const handleToggleProgramComplete = async (programId, scheduleId) => {
@@ -986,9 +988,53 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
 
   const toggleCategory = (cat) => setSelectedCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]);
 
+  const modeSwitchBar = (
+    <div className="liquid-glass-segmented rounded-2xl p-1 flex items-center gap-1 mb-4">
+      <button
+        type="button"
+        onClick={() => {
+          triggerHaptic('selection');
+          setIsMetricsOnlyMode(false);
+          setShowDashboard(false);
+          if (workoutItems.length === 0) addExerciseItem(null);
+        }}
+        className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+          !showDashboard && !isMetricsOnlyMode
+            ? 'liquid-glass-segment-active text-emerald-600 dark:text-emerald-400'
+            : 'text-slate-500 dark:text-slate-400'
+        }`}
+      >
+        <Dumbbell size={15} />
+        <span>{myInfo?.isTraining ? 'ワークアウト記録中' : 'トレーニング記録'}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          triggerHaptic('selection');
+          setIsMetricsOnlyMode(false);
+          setShowDashboard(true);
+        }}
+        className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+          showDashboard && !isMetricsOnlyMode
+            ? 'liquid-glass-segment-active text-indigo-600 dark:text-indigo-400'
+            : 'text-slate-500 dark:text-slate-400'
+        }`}
+      >
+        <Target size={15} />
+        <span>プログラム管理</span>
+        {activeProgramsList.length > 0 && (
+          <span className="ml-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500 text-white leading-none">
+            {activeProgramsList.length}
+          </span>
+        )}
+      </button>
+    </div>
+  );
+
   if (isMetricsOnlyMode) {
      return (
-       <div className="space-y-6 animate-in fade-in duration-300">
+       <div className="space-y-5 animate-in fade-in duration-300">
+          {modeSwitchBar}
           <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">体重・体脂肪率を記録</h2>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
              <FormInput label="日付" type="date" value={manualDate} onChange={e => setManualDate(e.target.value)} />
@@ -1008,9 +1054,10 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
 
   if (showDashboard) {
     return (
-      <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="space-y-5 animate-in fade-in duration-300">
+        {modeSwitchBar}
         <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
-          {myInfo?.isTraining ? 'プログラム・メニュー' : 'ワークアウトを開始'}
+          {myInfo?.isTraining ? 'プログラム管理・メニュー' : 'ワークアウト開始・プログラム管理'}
         </h2>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col items-center">
           <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4"><MapPin size={28} className="text-slate-400 dark:text-slate-500" /></div>
@@ -1088,7 +1135,8 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-5 animate-in fade-in duration-300">
+      {modeSwitchBar}
       {!isManual && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
           <div className="flex items-center justify-between gap-3">
@@ -1198,10 +1246,17 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
       </div>
 
       <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
-        <h2 className="text-lg font-bold text-slate-900 dark:text-white">{isManual ? '記録内容' : (myInfo?.isTraining ? 'ワークアウト中' : 'トレーニング準備中（開始前）')}</h2>
+        <h2 className="text-lg font-bold text-slate-900 dark:text-white">{isManual ? '過去の記録入力' : (myInfo?.isTraining ? 'ワークアウト中' : 'トレーニング準備中')}</h2>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { triggerHaptic('selection'); setShowDashboard(true); }}
+            className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50/90 dark:bg-indigo-950/60 px-3 py-1.5 rounded-xl border border-indigo-200/80 dark:border-indigo-800/80 flex items-center gap-1 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors shadow-sm"
+          >
+            <Target size={14} /> プログラム管理
+          </button>
           {workoutItems.length > 1 && (
-            <button onClick={() => setShowReorderModal(true)} className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors shadow-sm">
+            <button onClick={() => setShowReorderModal(true)} className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50/90 dark:bg-emerald-950/60 px-3 py-1.5 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 flex items-center gap-1 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors shadow-sm">
               <ArrowUp size={14} /><ArrowDown size={14} className="-ml-2" /> 並び替え
             </button>
           )}

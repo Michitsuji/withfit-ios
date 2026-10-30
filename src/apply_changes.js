@@ -9,6 +9,7 @@ const TARGET_FILES = [
   'App.js',
   'firebase.js',
   'nativeBridge.js',
+  'localStore.js',
   'utils.js',
   'CommonUI.js',
   'WorkoutCard.js',

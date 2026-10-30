@@ -20,7 +20,7 @@ html, body {
   width: 100%;
   overscroll-behavior-y: none;
   -webkit-text-size-adjust: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Segoe UI', 'Roboto', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -36,6 +36,160 @@ input, textarea, select {
 
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* =========================================================
+   iOS Liquid Glass Design System (iOS 26 Native Aesthetic)
+   ========================================================= */
+
+/* Ambient mesh backdrop so Liquid Glass refraction has natural depth */
+.ios-app-canvas {
+  background-image:
+    radial-gradient(at 15% 8%, rgba(99, 102, 241, 0.09) 0px, transparent 48%),
+    radial-gradient(at 88% 18%, rgba(16, 185, 129, 0.09) 0px, transparent 52%),
+    radial-gradient(at 50% 85%, rgba(56, 189, 248, 0.07) 0px, transparent 55%);
+  background-attachment: fixed;
+}
+
+.dark.ios-app-canvas,
+.dark .ios-app-canvas {
+  background-image:
+    radial-gradient(at 15% 8%, rgba(99, 102, 241, 0.16) 0px, transparent 48%),
+    radial-gradient(at 88% 18%, rgba(16, 185, 129, 0.14) 0px, transparent 52%),
+    radial-gradient(at 50% 85%, rgba(14, 165, 233, 0.12) 0px, transparent 55%);
+}
+
+/* Liquid Glass Top Header */
+.liquid-glass-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78) 0%, rgba(248, 250, 252, 0.66) 100%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
+  backdrop-filter: blur(28px) saturate(200%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.65) !important;
+  box-shadow:
+    inset 0 -0.5px 0 rgba(148, 163, 184, 0.25),
+    0 4px 24px -4px rgba(15, 23, 42, 0.06) !important;
+}
+
+.dark .liquid-glass-header {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.78) 0%, rgba(15, 23, 42, 0.64) 100%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.08),
+    0 8px 28px -4px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* Liquid Glass Floating Pill Tab Bar (Bottom Capsule) */
+.liquid-glass-tabbar {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(241, 245, 249, 0.58) 100%);
+  -webkit-backdrop-filter: blur(34px) saturate(210%);
+  backdrop-filter: blur(34px) saturate(210%);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  box-shadow:
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.92),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.4),
+    0 12px 34px -6px rgba(15, 23, 42, 0.18),
+    0 3px 10px rgba(15, 23, 42, 0.07);
+}
+
+.dark .liquid-glass-tabbar {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.74) 0%, rgba(15, 23, 42, 0.64) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.25),
+    inset 0 -0.5px 0.5px rgba(255, 255, 255, 0.08),
+    0 16px 38px -6px rgba(0, 0, 0, 0.6),
+    0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+/* Active Tab Pill inside Liquid Glass Tab Bar */
+.liquid-glass-pill-active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(241, 245, 249, 0.78) 100%);
+  border: 0.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 1),
+    0 2px 10px rgba(15, 23, 42, 0.09);
+}
+
+.dark .liquid-glass-pill-active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.09) 100%);
+  border: 0.5px solid rgba(255, 255, 255, 0.24);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.3),
+    0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.liquid-glass-pill-training {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(16, 185, 129, 0.22) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.6),
+    0 2px 12px rgba(245, 158, 11, 0.25);
+}
+
+/* Liquid Glass Segmented Control (iOS Native Sliding Switch) */
+.liquid-glass-segmented {
+  background: rgba(226, 232, 240, 0.65);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.dark .liquid-glass-segmented {
+  background: rgba(15, 23, 42, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.liquid-glass-segment-active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.82) 100%);
+  border: 0.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 1),
+    0 3px 10px -2px rgba(15, 23, 42, 0.12);
+}
+
+.dark .liquid-glass-segment-active {
+  background: linear-gradient(180deg, rgba(51, 65, 85, 0.9) 0%, rgba(30, 41, 59, 0.82) 100%);
+  border: 0.5px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.28),
+    0 4px 12px -2px rgba(0, 0, 0, 0.45);
+}
+
+/* Liquid Glass Cards & Surfaces (Automatic iOS Native Upgrade) */
+.liquid-glass-surface,
+main .bg-white.rounded-2xl,
+main .bg-white.rounded-3xl {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.68) 100%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(24px) saturate(190%);
+  border-color: rgba(255, 255, 255, 0.78) !important;
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.9),
+    0 8px 24px -6px rgba(15, 23, 42, 0.07),
+    0 2px 6px rgba(15, 23, 42, 0.03) !important;
+}
+
+.dark .liquid-glass-surface,
+.dark main .dark\:bg-slate-900.rounded-2xl,
+.dark main .dark\:bg-slate-900.rounded-3xl {
+  background: linear-gradient(145deg, rgba(30, 41, 59, 0.76) 0%, rgba(15, 23, 42, 0.68) 100%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(24px) saturate(190%);
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.18),
+    0 10px 28px -6px rgba(0, 0, 0, 0.45) !important;
+}
+
+/* Tactile iOS button press spring animation */
+button {
+  transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 code {

@@ -55,7 +55,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/ios/build"
           xcodebuild \
             -project ios/WithFit.xcodeproj \
-            -scheme WithFit \
+            -target WithFit \
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$GITHUB_WORKSPACE/ios/build" \

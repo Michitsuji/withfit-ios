@@ -2,13 +2,13 @@
 // App.js — メインアプリケーションコンポーネント
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
+import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon, RefreshCw, CheckCircle } from 'lucide-react';
 import { GoogleAuthProvider, signInWithCredential, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
 import { db, appId, auth, app } from './firebase';
 import { generateId, generateFriendCode, calculateWorkoutTotals, getRelativeTime } from './utils';
-import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, NavButton, RecordWheelWrapper } from './CommonUI';
+import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, NavButton } from './CommonUI';
 import { TimelineView, WorkoutCard } from './WorkoutCard';
 import { EditWorkoutModal } from './WorkoutForm';
 import { DataView } from './DataView';
@@ -16,7 +16,8 @@ import { RecordView } from './RecordView';
 import { ExercisesView } from './ExercisesView';
 import { FriendsView, FriendDetailModal } from './FriendsView';
 import { LoginScreen, ProfileModal, UserProfileModal } from './ProfileModals';
-import { CoachChatModal, SecretGame } from './CoachAndGame';
+import { SecretGame } from './CoachAndGame';
+import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap } from './localStore';
 import {
   isNativeIosApp,
   postNativeMessage,
@@ -286,7 +287,22 @@ export default function App() {
   const [pushPromptType, setPushPromptType] = useState('request');
   const [osPermission, setOsPermission] = useState('default');
 
-  const [showCoachChat, setShowCoachChat] = useState(false);
+  const [showLocalSyncPanel, setShowLocalSyncPanel] = useState(false);
+  const [diffStatus, setDiffStatus] = useState({
+    lastCheckedAt: null,
+    added: 0,
+    modified: 0,
+    removed: 0,
+    hasRecentDiff: false,
+    isChecking: false
+  });
+  const localCacheRef = useRef({
+    accountsInfo: {},
+    gyms: [],
+    exercises: [],
+    posts: [],
+    notifications: []
+  });
 
   const [restDuration, setRestDuration] = useState(0);
   const [restTimerStart, setRestTimerStart] = useState(null);
@@ -499,7 +515,7 @@ export default function App() {
         const hasActiveFriends = currentUser && accountsInfo[currentUser]?.friends?.some(f => accountsInfo[f]?.isTraining);
         transformY = hasActiveFriends ? 112 : 80;
      } else {
-        transformY = screenH - cardH - 90;
+        transformY = screenH - cardH - 78;
      }
   }
   const isHidden = timerState.hidden;
@@ -931,6 +947,149 @@ export default function App() {
     };
   }, []);
 
+  // ローカルデータベースからの即時ハイドレーション（0ms起動）
+  useEffect(() => {
+    if (!currentUser) return;
+    const cached = loadLocalDB(currentUser);
+    if (cached && typeof cached === 'object') {
+      if (cached.accountsInfo && Object.keys(cached.accountsInfo).length > 0) {
+        localCacheRef.current.accountsInfo = cached.accountsInfo;
+        setAccountsInfo(cached.accountsInfo);
+      }
+      if (Array.isArray(cached.gyms)) {
+        localCacheRef.current.gyms = cached.gyms;
+        setGyms(cached.gyms);
+      }
+      if (Array.isArray(cached.exercises)) {
+        localCacheRef.current.exercises = cached.exercises;
+        setExercises(cached.exercises);
+      }
+      if (Array.isArray(cached.posts)) {
+        localCacheRef.current.posts = cached.posts;
+        setPosts(cached.posts);
+      }
+      if (Array.isArray(cached.notifications)) {
+        localCacheRef.current.notifications = cached.notifications;
+        setNotifications(cached.notifications);
+      }
+      setDataLoaded({ accounts: true, gyms: true, exercises: true, workouts: true });
+      setDiffStatus(prev => ({
+        ...prev,
+        lastCheckedAt: cached.savedAt || Date.now()
+      }));
+    }
+  }, [currentUser]);
+
+  const persistLocalSnapshot = useCallback((partial = {}, diffCounts = null) => {
+    if (!currentUser) return;
+    localCacheRef.current = {
+      ...localCacheRef.current,
+      ...partial
+    };
+    saveLocalDB(currentUser, localCacheRef.current);
+    if (diffCounts) {
+      const totalDiff = (diffCounts.added || 0) + (diffCounts.modified || 0) + (diffCounts.removed || 0);
+      setDiffStatus({
+        lastCheckedAt: Date.now(),
+        added: diffCounts.added || 0,
+        modified: diffCounts.modified || 0,
+        removed: diffCounts.removed || 0,
+        hasRecentDiff: totalDiff > 0,
+        isChecking: false
+      });
+    }
+  }, [currentUser]);
+
+  // 手動差分チェック＆ローカル同期関数
+  const handleManualDiffCheck = useCallback(async () => {
+    if (!currentUser || !db) return;
+    triggerHaptic('medium');
+    setDiffStatus(prev => ({ ...prev, isChecking: true }));
+    let totalAdded = 0;
+    let totalModified = 0;
+    let totalRemoved = 0;
+
+    try {
+      // 1. ジム一覧の差分チェック
+      const gymsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gyms'));
+      const gymsData = [];
+      gymsSnap.forEach(d => gymsData.push({ id: d.id, ...d.data() }));
+      gymsData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const gymDiff = diffArrayCollection(localCacheRef.current.gyms, gymsData, 'id');
+      if (gymDiff.hasChanges) {
+        totalAdded += gymDiff.added;
+        totalModified += gymDiff.modified;
+        totalRemoved += gymDiff.removed;
+        setGyms(gymsData);
+        localCacheRef.current.gyms = gymsData;
+      }
+
+      // 2. 種目一覧の差分チェック
+      const exSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'exercises'));
+      const exData = [];
+      exSnap.forEach(d => exData.push({ id: d.id, ...d.data() }));
+      exData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const exDiff = diffArrayCollection(localCacheRef.current.exercises, exData, 'id');
+      if (exDiff.hasChanges) {
+        totalAdded += exDiff.added;
+        totalModified += exDiff.modified;
+        totalRemoved += exDiff.removed;
+        setExercises(exData);
+        localCacheRef.current.exercises = exData;
+      }
+
+      // 3. アカウント情報の差分チェック
+      const myFriends = localCacheRef.current.accountsInfo[currentUser]?.friends || [];
+      const targetAccIds = [...new Set([currentUser, ...myFriends])];
+      const accUpdates = {};
+      await Promise.all(targetAccIds.map(async (uid) => {
+        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', uid));
+        if (snap.exists()) accUpdates[uid] = snap.data();
+      }));
+      const accDiff = diffObjectMap(localCacheRef.current.accountsInfo, accUpdates);
+      if (accDiff.hasChanges) {
+        totalAdded += accDiff.added;
+        totalModified += accDiff.modified;
+        setAccountsInfo(accDiff.map);
+        localCacheRef.current.accountsInfo = accDiff.map;
+      }
+
+      // 4. ワークアウト記録の差分チェック
+      const chunks = [];
+      for (let i = 0; i < targetAccIds.length; i += 10) {
+        chunks.push(targetAccIds.slice(i, i + 10));
+      }
+      const fetchedPosts = [];
+      for (const chunk of chunks) {
+        const wSnap = await getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'workouts'), where('author', 'in', chunk)));
+        wSnap.forEach(d => fetchedPosts.push({ id: d.id, ...d.data() }));
+      }
+      fetchedPosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      const postDiff = diffArrayCollection(localCacheRef.current.posts, fetchedPosts, 'id');
+      if (postDiff.hasChanges) {
+        totalAdded += postDiff.added;
+        totalModified += postDiff.modified;
+        totalRemoved += postDiff.removed;
+        setPosts(fetchedPosts);
+        localCacheRef.current.posts = fetchedPosts;
+      }
+
+      saveLocalDB(currentUser, localCacheRef.current);
+      setDiffStatus({
+        lastCheckedAt: Date.now(),
+        added: totalAdded,
+        modified: totalModified,
+        removed: totalRemoved,
+        hasRecentDiff: (totalAdded + totalModified + totalRemoved) > 0,
+        isChecking: false
+      });
+      triggerHaptic('success');
+    } catch (e) {
+      console.warn('Manual diff check warning:', e);
+      setDiffStatus(prev => ({ ...prev, lastCheckedAt: Date.now(), isChecking: false }));
+    }
+  }, [currentUser]);
+
   const exercisesByChunkRef = useRef({});
 
   useEffect(() => {
@@ -944,8 +1103,12 @@ export default function App() {
     const unsubGyms = onSnapshot(gymsRef, (snapshot) => {
       const gymsData = []; 
       snapshot.forEach(doc => { gymsData.push({ id: doc.id, ...doc.data() }); }); 
-      gymsData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)); 
-      setGyms(gymsData); 
+      gymsData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const diff = diffArrayCollection(localCacheRef.current.gyms, gymsData, 'id');
+      if (diff.hasChanges) {
+        setGyms(gymsData);
+        persistLocalSnapshot({ gyms: gymsData }, diff);
+      }
       setDataLoaded(prev => ({ ...prev, gyms: true }));
     }, (err) => {
       console.error(err);
@@ -957,7 +1120,11 @@ export default function App() {
       const allExs = [];
       snapshot.forEach(doc => { allExs.push({ id: doc.id, ...doc.data() }); });
       allExs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-      setExercises(allExs);
+      const diff = diffArrayCollection(localCacheRef.current.exercises, allExs, 'id');
+      if (diff.hasChanges) {
+        setExercises(allExs);
+        persistLocalSnapshot({ exercises: allExs }, diff);
+      }
       setDataLoaded(prev => ({ ...prev, exercises: true }));
     }, (err) => {
       console.error(err);
@@ -997,8 +1164,11 @@ export default function App() {
         
         const allPosts = Object.values(postsByChunkRef.current).flat();
         allPosts.sort((a, b) => b.timestamp - a.timestamp);
-        
-        setPosts(allPosts);
+        const diff = diffArrayCollection(localCacheRef.current.posts, allPosts, 'id');
+        if (diff.hasChanges) {
+          setPosts(allPosts);
+          persistLocalSnapshot({ posts: allPosts }, diff);
+        }
         setDataLoaded(prev => ({ ...prev, workouts: true }));
       }, (err) => {
         console.error(err);
@@ -1021,7 +1191,12 @@ export default function App() {
     const meRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser);
     const unsub = onSnapshot(meRef, (docSnap) => {
        if (docSnap.exists()) {
-          setAccountsInfo(prev => ({ ...prev, [currentUser]: docSnap.data() }));
+          const newData = docSnap.data();
+          const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [currentUser]: newData });
+          if (diff.hasChanges) {
+             setAccountsInfo(diff.map);
+             persistLocalSnapshot({ accountsInfo: diff.map }, diff);
+          }
           setDataLoaded(prev => ({ ...prev, accounts: true }));
        }
     }, (err) => {
@@ -1044,7 +1219,12 @@ export default function App() {
        const fRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', fId);
        unsubs.push(onSnapshot(fRef, (docSnap) => {
           if (docSnap.exists()) {
-             setAccountsInfo(prev => ({ ...prev, [fId]: docSnap.data() }));
+             const fData = docSnap.data();
+             const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [fId]: fData });
+             if (diff.hasChanges) {
+                setAccountsInfo(diff.map);
+                persistLocalSnapshot({ accountsInfo: diff.map }, diff);
+             }
           }
        }));
     });
@@ -1300,6 +1480,12 @@ export default function App() {
 
     const newDocId = `workout_${generateId()}`;
     const cleanItems = JSON.parse(JSON.stringify(processedItems));
+    const newWorkoutObj = {
+      id: newDocId, author: currentUser, gymName, items: cleanItems, timestamp: timestamp, startTime, endTime, duration, date: dateIso, likes: 0, likedByMe: false, bodyWeight: bodyWeight || null, bodyFat: bodyFat || null, volume: totalVolume, calories: totalCalories, totalSets: totalSets, jointWith: jointPartnerId || null
+    };
+    const nextLocalPosts = [newWorkoutObj, ...localCacheRef.current.posts.filter(p => p.id !== newDocId)].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    setPosts(nextLocalPosts);
+    persistLocalSnapshot({ posts: nextLocalPosts }, { added: 1, modified: 0, removed: 0 });
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'workouts', newDocId), {
         author: currentUser, gymName, items: cleanItems, timestamp: timestamp, startTime, endTime, duration, date: dateIso, likes: 0, likedByMe: false, bodyWeight: bodyWeight || null, bodyFat: bodyFat || null, volume: totalVolume, calories: totalCalories, totalSets: totalSets, jointWith: jointPartnerId || null
@@ -1349,12 +1535,19 @@ export default function App() {
       : calculateWorkoutTotals(updatedData.items, updatedData.duration, updatedData.bodyWeight);
     const totalSets = processedItems.reduce((acc, it) => acc + (it.sets?.length || 0), 0);
     const cleanItems = JSON.parse(JSON.stringify(processedItems));
-    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'workouts', postId), { ...updatedData, items: cleanItems, volume: totalVolume, calories: totalCalories, totalSets: totalSets }, { merge: true }); setEditingPost(null); } catch (e) { console.error("Update error:", e); }
+    const nextLocalPosts = localCacheRef.current.posts.map(p => p.id === postId ? { ...p, ...updatedData, items: cleanItems, volume: totalVolume, calories: totalCalories, totalSets: totalSets } : p);
+    setPosts(nextLocalPosts);
+    persistLocalSnapshot({ posts: nextLocalPosts }, { added: 0, modified: 1, removed: 0 });
+    setEditingPost(null);
+    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'workouts', postId), { ...updatedData, items: cleanItems, volume: totalVolume, calories: totalCalories, totalSets: totalSets }, { merge: true }); } catch (e) { console.error("Update error:", e); }
   };
 
   const handleDeleteWorkout = async (postId) => {
     if (!currentUser || !db) return;
     if (!window.confirm("この記録を削除しますか？")) return;
+    const nextLocalPosts = localCacheRef.current.posts.filter(p => p.id !== postId);
+    setPosts(nextLocalPosts);
+    persistLocalSnapshot({ posts: nextLocalPosts }, { added: 0, modified: 0, removed: 1 });
     try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'workouts', postId)); } catch (e) {}
   };
 
@@ -1412,7 +1605,14 @@ export default function App() {
 
   const handleSaveProfile = async (data, shouldClose = true) => {
     if (!currentUser || !db) return;
-    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), data, { merge: true }); if (shouldClose) setShowProfileModal(false); } catch (e) {}
+    const nextAcc = {
+      ...localCacheRef.current.accountsInfo,
+      [currentUser]: { ...(localCacheRef.current.accountsInfo[currentUser] || {}), ...data }
+    };
+    setAccountsInfo(nextAcc);
+    persistLocalSnapshot({ accountsInfo: nextAcc }, { added: 0, modified: 1, removed: 0 });
+    if (shouldClose) setShowProfileModal(false);
+    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), data, { merge: true }); } catch (e) {}
   };
 
   const toggleLike = async (postId, currentLikes, isCurrentlyLiked, likedUsers = []) => {
@@ -2153,7 +2353,7 @@ export default function App() {
   };
 
   return (
-    <div className={`min-h-screen font-sans pb-32 overflow-x-hidden select-none transition-colors duration-300 ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} ${themeContainerClass}`}>
+    <div className={`ios-app-canvas min-h-screen font-sans pb-28 overflow-x-hidden select-none transition-colors duration-300 ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} ${themeContainerClass}`}>
       <style>{`
         input, textarea, select { font-size: 16px !important; }
         .dark, .dark body { background-color: #0f172a !important; color: #f8fafc !important; }
@@ -2260,33 +2460,86 @@ export default function App() {
         </div>
       )}
 
-      <header className="fixed top-0 left-0 right-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 z-30 shadow-sm flex flex-col transition-colors">
-        <div className="p-4 flex justify-between items-center relative">
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-1">
+      <header className="fixed top-0 left-0 right-0 liquid-glass-header z-30 flex flex-col transition-colors">
+        <div className="px-4 py-3 flex justify-between items-center relative max-w-md mx-auto w-full">
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-1 tracking-tight">
             <WithFitLogo className="text-indigo-500" /><span>With<span className="text-indigo-500">Fit</span></span>
           </h1>
-          <div className="flex items-center gap-3">
-            <button onClick={handleOpenNotifications} className="relative p-1.5 text-slate-400 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
-              <Bell size={20} />
+          <div className="flex items-center gap-2.5">
+            <button onClick={handleOpenNotifications} className="relative p-2 rounded-full liquid-glass-pill-active text-slate-600 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
+              <Bell size={18} />
               {unreadNotificationCount > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-sm">
                   {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
                 </span>
               )}
             </button>
-            <div onClick={handleHeaderOnlineTap} className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950 px-2 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 cursor-pointer select-none">
-              <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]'}`}></div>
-              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{isOnline ? 'オンライン' : 'オフライン'}</span>
-            </div>
-            <button onClick={() => setShowProfileModal(true)} className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-              <UserAvatar userId={currentUser} accountsInfo={accountsInfo} size={24} className="border-transparent" />
-              <span className="text-sm font-bold text-slate-700 dark:text-slate-200 hidden sm:inline">
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('selection');
+                handleHeaderOnlineTap();
+                setShowLocalSyncPanel(prev => !prev);
+              }}
+              className="flex items-center gap-1.5 liquid-glass-pill-active px-2.5 py-1.5 rounded-full cursor-pointer select-none"
+            >
+              <div className={`w-2 h-2 rounded-full ${diffStatus.isChecking ? 'bg-amber-400 animate-ping' : isOnline ? 'bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]'}`}></div>
+              <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                {diffStatus.isChecking ? '差分確認中' : 'ローカル同期'}
+              </span>
+            </button>
+            <button onClick={() => { triggerHaptic('selection'); setShowProfileModal(true); }} className="flex items-center gap-1.5 liquid-glass-pill-active p-1 sm:px-2.5 sm:py-1 rounded-full transition-colors">
+              <UserAvatar userId={currentUser} accountsInfo={accountsInfo} size={26} className="border-transparent" />
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-200 hidden sm:inline">
                 {renderUsernameWithBadge(currentUser, myInfo.displayName, accountsInfo, "font-bold text-slate-700 dark:text-slate-200")}
               </span>
             </button>
-            <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 p-1.5 rounded-full transition-colors"><LogOut size={20} /></button>
+            <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 p-1.5 rounded-full transition-colors"><LogOut size={19} /></button>
           </div>
         </div>
+        {showLocalSyncPanel && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowLocalSyncPanel(false)}></div>
+            <div className="absolute top-14 right-3 w-80 max-w-[calc(100vw-24px)] liquid-glass-surface bg-white/90 dark:bg-slate-900/90 border border-white/80 dark:border-slate-700/80 rounded-3xl shadow-2xl z-50 p-4 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle size={16} className="text-emerald-500" />
+                  <span className="text-xs font-extrabold text-slate-800 dark:text-white">ローカル保存＆差分チェック</span>
+                </div>
+                <button type="button" onClick={() => setShowLocalSyncPanel(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded-full">
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="bg-slate-100/70 dark:bg-slate-950/60 rounded-2xl p-3 space-y-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-3">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">ローカル保持データ:</span>
+                  <span>記録 {posts.length}件 / 種目 {exercises.length}件</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">直近の差分判定:</span>
+                  <span className={diffStatus.hasRecentDiff ? "text-emerald-500" : "text-slate-500 dark:text-slate-400"}>
+                    {diffStatus.hasRecentDiff
+                      ? `差分反映 (+${diffStatus.added} / 更新${diffStatus.modified} / 削除${diffStatus.removed})`
+                      : '差分なし（最新状態）'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">最終チェック:</span>
+                  <span>{diffStatus.lastCheckedAt ? getRelativeTime(diffStatus.lastCheckedAt) : '起動時'}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={diffStatus.isChecking}
+                onClick={handleManualDiffCheck}
+                className="w-full py-2.5 px-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/25"
+              >
+                <RefreshCw size={14} className={diffStatus.isChecking ? "animate-spin" : ""} />
+                <span>{diffStatus.isChecking ? '差分をチェック中...' : '今すぐ差分をチェック'}</span>
+              </button>
+            </div>
+          </>
+        )}
         {activeFriends.length > 0 && (() => {
           const friendsInSameGym = activeFriends.filter(f => accountsInfo[f]?.currentGymId === myInfo?.currentGymId && myInfo?.currentGymId);
           const isSameGym = friendsInSameGym.length > 0;
@@ -2553,7 +2806,7 @@ export default function App() {
         {currentTab === 'timeline' && <TimelineView posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
         {currentTab === 'exercises' && <ExercisesView gyms={allGyms} exercises={exercises} posts={visiblePosts} accountsInfo={accountsInfo} currentUser={currentUser} myInfo={myInfo} setCurrentTab={setCurrentTab} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'record' && <RecordView onStart={handleStartTraining} onPost={handlePostWorkout} onCancel={handleCancelTraining} onRequestJointTraining={handleRequestJointTraining} onAcceptJointTraining={handleAcceptJointTraining} onRejectJointTraining={handleRejectJointTraining} onCancelJointTraining={handleCancelJointTraining} onImportItem={handleImportExerciseItem} myInfo={myInfo} gyms={allGyms} exercises={exercises} workoutItems={draftWorkoutItems} setWorkoutItems={setDraftWorkoutItems} selectedCategories={selectedCategories} setSelectedCategories={setSelectedCategories} posts={visiblePosts} currentUser={currentUser} isManual={isRecordManual} setIsManual={setIsRecordManual} onActiveExerciseChange={handleActiveExerciseChange} accountsInfo={accountsInfo} />}
-        {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} onOpenCoach={() => setShowCoachChat(true)} />}
+        {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'friends' && <FriendsView currentUser={currentUser} myInfo={myInfo} accountsInfo={accountsInfo} onSendRequest={handleSendFriendRequest} onAccept={handleAcceptFriendRequest} onReject={handleRejectFriendRequest} onRemoveFriend={handleRemoveFriend} onSendPartnerRequest={handleSendPartnerRequest} onAcceptPartnerRequest={handleAcceptPartnerRequest} onRejectPartnerRequest={handleRejectPartnerRequest} onRemovePartner={handleRemovePartner} onFriendClick={(u) => setSelectedFriendUser(u)} onGenerateFriendCode={handleGenerateFriendCode} posts={posts} targetFriendTab={targetFriendTab} setTargetFriendTab={setTargetFriendTab} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onSendTestPush={async (targetUser, message) => {
           if (!db || !targetUser || !message) return;
           const res = await sendNotification(
@@ -2591,15 +2844,67 @@ export default function App() {
         </div>
       )}
 
-      <nav className="fixed bottom-0 w-full bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pt-1 pb-safe z-30 transition-colors" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
-        <div className="flex justify-around items-center p-2 max-w-md mx-auto">
-          <NavButton icon={<Home size={22} />} label="ホーム" isActive={currentTab === 'timeline'} onClick={() => { if(currentTab === 'timeline') window.scrollTo({top:0, behavior:'smooth'}); else setCurrentTab('timeline'); }} />
-          <NavButton icon={<Dumbbell size={22} />} label="種目" isActive={currentTab === 'exercises'} onClick={() => { if(currentTab === 'exercises') window.scrollTo({top:0, behavior:'smooth'}); else setCurrentTab('exercises'); }} />
-          <RecordWheelWrapper myInfo={myInfo} currentTab={currentTab} setCurrentTab={setCurrentTab}>
-            <NavButton icon={myInfo.isTraining ? <Clock className="animate-pulse" size={28}/> : <PlusCircle size={28} />} label={myInfo.isTraining ? "記録中" : "記録"} isActive={currentTab === 'record'} onClick={() => { if (!myInfo?.isTraining) { if(currentTab === 'record') { window.scrollTo({top:0, behavior:'smooth'}); window.dispatchEvent(new CustomEvent('showRecordDashboard')); } else { setCurrentTab('record'); window.dispatchEvent(new CustomEvent('showRecordDashboard')); } } }} isPrimary isTraining={myInfo.isTraining} />
-          </RecordWheelWrapper>
-          <NavButton icon={<CalendarIcon size={22} />} label="データ" isActive={currentTab === 'data'} onClick={() => { if(currentTab === 'data') window.scrollTo({top:0, behavior:'smooth'}); else setCurrentTab('data'); }} />
-          <NavButton icon={<Users size={22} />} label="フレンド" isActive={currentTab === 'friends'} onClick={() => { if(currentTab === 'friends') window.scrollTo({top:0, behavior:'smooth'}); else setCurrentTab('friends'); }} />
+      <nav
+        className="fixed left-3 right-3 z-30 max-w-[400px] mx-auto pointer-events-none"
+        style={{ bottom: 'max(6px, calc(env(safe-area-inset-bottom, 0px) - 14px))' }}
+      >
+        <div className="liquid-glass-tabbar pointer-events-auto rounded-full p-1 flex items-center justify-between gap-0.5">
+          <NavButton
+            icon={<Home size={20} />}
+            label="ホーム"
+            isActive={currentTab === 'timeline'}
+            onClick={() => {
+              if (currentTab === 'timeline') window.scrollTo({ top: 0, behavior: 'smooth' });
+              else setCurrentTab('timeline');
+            }}
+          />
+          <NavButton
+            icon={<Dumbbell size={20} />}
+            label="種目"
+            isActive={currentTab === 'exercises'}
+            onClick={() => {
+              if (currentTab === 'exercises') window.scrollTo({ top: 0, behavior: 'smooth' });
+              else setCurrentTab('exercises');
+            }}
+          />
+          <NavButton
+            icon={myInfo.isTraining ? <Clock className="animate-pulse" size={20} /> : <PlusCircle size={21} />}
+            label={myInfo.isTraining ? "記録中" : "記録"}
+            isActive={currentTab === 'record'}
+            isPrimary
+            isTraining={myInfo.isTraining}
+            onClick={() => {
+              if (currentTab === 'record') {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                if (myInfo?.isTraining) {
+                  window.dispatchEvent(new CustomEvent('returnToRecordInput'));
+                }
+              } else {
+                setCurrentTab('record');
+                if (myInfo?.isTraining) {
+                  setTimeout(() => window.dispatchEvent(new CustomEvent('returnToRecordInput')), 20);
+                }
+              }
+            }}
+          />
+          <NavButton
+            icon={<CalendarIcon size={20} />}
+            label="データ"
+            isActive={currentTab === 'data'}
+            onClick={() => {
+              if (currentTab === 'data') window.scrollTo({ top: 0, behavior: 'smooth' });
+              else setCurrentTab('data');
+            }}
+          />
+          <NavButton
+            icon={<Users size={20} />}
+            label="フレンド"
+            isActive={currentTab === 'friends'}
+            onClick={() => {
+              if (currentTab === 'friends') window.scrollTo({ top: 0, behavior: 'smooth' });
+              else setCurrentTab('friends');
+            }}
+          />
         </div>
       </nav>
 
@@ -2654,7 +2959,6 @@ export default function App() {
         pushStatus={pushStatus}
       />
       <UserProfileModal isOpen={!!selectedUserProfile} onClose={() => setSelectedUserProfile(null)} targetUser={selectedUserProfile} accountsInfo={accountsInfo} currentUser={currentUser} onSendRequest={handleSendFriendRequest} />
-      <CoachChatModal isOpen={showCoachChat} onClose={() => setShowCoachChat(false)} currentUser={currentUser} accountsInfo={accountsInfo} posts={posts} appId={appId} />
       {showSecretGame && <SecretGame onClose={() => setShowSecretGame(false)} currentUser={currentUser} accountsInfo={accountsInfo} appId={appId} />}
     </div>
   );

@@ -923,24 +923,34 @@ function AdBanner() {
   );
 }
 
-// --- ナビゲーションボタン ---
+// --- ナビゲーションボタン（iOS Liquid Glass カプセルピル仕様） ---
 function NavButton({ icon, label, isActive, onClick, isPrimary, isTraining }) {
   const handleNavClick = (e) => {
     triggerHaptic(isPrimary ? 'medium' : 'selection');
     if (onClick) onClick(e);
   };
-  if (isPrimary) {
-    return (
-      <button onClick={handleNavClick} className="flex flex-col items-center justify-center -mt-8 relative group">
-        <div className={`w-16 h-16 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 text-white nav-primary-btn ${isTraining ? 'bg-amber-500 shadow-amber-500/40 scale-110 is-training' : isActive ? 'bg-indigo-500 shadow-indigo-500/40 scale-110 active' : 'bg-slate-800 dark:bg-slate-700 border-4 border-white dark:border-slate-800 group-hover:bg-slate-700 dark:group-hover:bg-slate-600 inactive'}`}><div>{icon}</div></div>
-        <span className={`text-[10px] mt-1 font-bold transition-colors nav-primary-label ${isTraining ? 'text-amber-500 is-training' : isActive ? 'text-indigo-600 dark:text-indigo-400 active' : 'text-slate-500 dark:text-slate-400 inactive'}`}>{label}</span>
-      </button>
-    );
-  }
+
+  const pillClass = isTraining && isPrimary
+    ? 'liquid-glass-pill-training text-amber-500 dark:text-amber-400'
+    : isActive
+    ? 'liquid-glass-pill-active text-indigo-600 dark:text-indigo-400'
+    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200';
+
   return (
-    <button onClick={handleNavClick} className={`flex flex-col items-center justify-center w-16 transition-colors duration-200 ${isActive ? 'text-indigo-500 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>
-      <div className={`mb-1 transition-transform duration-200 ${isActive ? 'scale-110' : ''}`}>{icon}</div>
-      <span className="text-[10px] font-bold">{label}</span>
+    <button
+      type="button"
+      onClick={handleNavClick}
+      className={`relative flex-1 h-[50px] rounded-full flex flex-col items-center justify-center gap-0.5 select-none transition-all duration-200 ${pillClass}`}
+    >
+      {isTraining && isPrimary && (
+        <span className="absolute top-1.5 right-3 w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-ping" />
+      )}
+      <div className={`transition-transform duration-200 ${isActive ? 'scale-105' : ''}`}>
+        {icon}
+      </div>
+      <span className={`text-[10px] leading-none tracking-tight ${isActive || (isTraining && isPrimary) ? 'font-extrabold' : 'font-semibold'}`}>
+        {label}
+      </span>
     </button>
   );
 }

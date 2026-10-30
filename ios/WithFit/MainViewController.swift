@@ -37,7 +37,9 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let contentController = WKUserContentController()
+        let savedNativeDBJSON = Self.loadNativeLocalDBJSON()
         let bridgeScriptSource = """
+        window.__WITHFIT_NATIVE_DB__ = \(savedNativeDBJSON);
         window.WithFitNative = true;
         window.ReactNativeWebView = {
           postMessage: function(msgStr) {
@@ -173,6 +175,12 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         case "SET_BACKEND_URL":
             if let urlStr = payload["url"] as? String {
                 LocalBundleServer.shared.backendBaseURL = urlStr
+            }
+
+        case "SAVE_LOCAL_DB":
+            if let userId = payload["userId"] as? String,
+               let dataStr = payload["data"] as? String {
+                Self.saveNativeLocalDBJSON(userId: userId, jsonString: dataStr)
             }
 
         default:
@@ -401,7 +409,7 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
     private func promptBackendURLChange() {
         let alert = UIAlertController(
             title: "APIサーバーURL設定",
-            message: "AIコーチ(/api/gemini)およびPush通知(/api/sendPush)のVercel URLを入力してください",
+            message: "プッシュ通知(/api/sendPush)用のバックエンドURLを入力してください",
             preferredStyle: .alert
         )
         alert.addTextField { tf in
@@ -416,5 +424,37 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
             }
         })
         presentTopAlert(alert)
+    }
+
+    // MARK: - iOS Native File Persistence for Local DB (Documents/withfit_local_db.json)
+    private static var nativeDBFileURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("withfit_local_db.json")
+    }
+
+    private static func loadNativeLocalDBJSON() -> String {
+        guard let data = try? Data(contentsOf: nativeDBFileURL),
+              let str = String(data: data, encoding: .utf8),
+              !str.isEmpty else {
+            return "{}"
+        }
+        return str
+    }
+
+    private static func saveNativeLocalDBJSON(userId: String, jsonString: String) {
+        DispatchQueue.global(qos: .utility).async {
+            var rootDict: [String: Any] = [:]
+            if let existingData = try? Data(contentsOf: nativeDBFileURL),
+               let parsed = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
+                rootDict = parsed
+            }
+            if let userData = jsonString.data(using: .utf8),
+               let userObj = try? JSONSerialization.jsonObject(with: userData) {
+                rootDict[userId] = userObj
+                if let outData = try? JSONSerialization.data(withJSONObject: rootDict) {
+                    try? outData.write(to: nativeDBFileURL, options: .atomic)
+                }
+            }
+        }
     }
 }
