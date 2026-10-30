@@ -52,23 +52,27 @@ jobs:
 
       - name: Build Native iOS App with Xcode
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/ios/build"
           xcodebuild \
             -project ios/WithFit.xcodeproj \
-            -target WithFit \
+            -scheme WithFit \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath ios/build \
+            SYMROOT="$GITHUB_WORKSPACE/ios/build" \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/ios/build" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            clean build
+            build
 
       - name: Package WithFit-iOS.ipa
         run: |
           rm -rf Payload WithFit-iOS.ipa
           mkdir -p Payload
-          cp -R ios/build/Build/Products/Release-iphoneos/WithFit.app Payload/
+          APP_PATH=$(find ios/build -name "WithFit.app" -type d | head -n 1)
+          echo "Found built app at: $APP_PATH"
+          cp -R "$APP_PATH" Payload/WithFit.app
           zip -r -9 -q WithFit-iOS.ipa Payload
           ls -lh WithFit-iOS.ipa
 
