@@ -6,7 +6,7 @@ import { Users, Flame, Circle, Trophy, Target, Copy, UserPlus, AlignLeft, Bell, 
 import { onSnapshot, collection, setDoc, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { db, appId } from './firebase';
 import { MASTER_USER, formatDateFromTimestamp } from './utils';
-import { renderUsernameWithBadge, TimerDisplay } from './CommonUI';
+import { renderUsernameWithBadge, TimerDisplay, LiquidGlassSegmented } from './CommonUI';
 import { copyTextToClipboard } from './nativeBridge';
 import { DataView } from './DataView';
 
@@ -153,13 +153,16 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
     <div className="space-y-6 animate-in fade-in">
       <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">フレンド</h2>
       
-      <div className="flex bg-slate-200 dark:bg-slate-800 p-1 rounded-xl mb-6">
-        {isPartnerEnabled && (
-          <button onClick={() => setActiveTab('partner')} className={`flex-1 py-2 text-sm font-bold text-center rounded-lg transition-colors ${activeTab === 'partner' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>パートナー</button>
-        )}
-        <button onClick={() => setActiveTab('friends')} className={`flex-1 py-2 text-sm font-bold text-center rounded-lg transition-colors ${activeTab === 'friends' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>フレンド一覧</button>
-        <button onClick={() => setActiveTab('add')} className={`flex-1 py-2 text-sm font-bold text-center rounded-lg transition-colors ${activeTab === 'add' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>フレンド追加</button>
-      </div>
+      <LiquidGlassSegmented
+        className="mb-6"
+        value={activeTab}
+        onChange={setActiveTab}
+        options={[
+          ...(isPartnerEnabled ? [{ value: 'partner', label: 'パートナー' }] : []),
+          { value: 'friends', label: 'フレンド一覧' },
+          { value: 'add', label: 'フレンド追加' }
+        ]}
+      />
 
       {isPartnerEnabled && activeTab === 'partner' && (
         <div className="space-y-6 animate-in fade-in">
@@ -595,8 +598,8 @@ function FriendDetailModal({ friendUsername, posts, accountsInfo, onClose, onTog
   const friendInfo = accountsInfo[friendUsername] || {};
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-sm z-50 flex flex-col justify-end sm:justify-center sm:items-center animate-in fade-in duration-200">
-      <div className="bg-slate-50 dark:bg-slate-950 sm:rounded-3xl rounded-t-3xl flex flex-col h-[90vh] sm:h-[85vh] w-full sm:max-w-md overflow-hidden shadow-2xl relative">
+    <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-sm z-50 flex flex-col justify-end sm:justify-center sm:items-center animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-slate-50 dark:bg-slate-950 sm:rounded-3xl rounded-t-3xl flex flex-col h-[90vh] sm:h-[85vh] w-full sm:max-w-md overflow-hidden shadow-2xl relative" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-10 pt-safe">
           <div className="flex items-center gap-2">
              <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center font-bold text-white text-xs bg-slate-600 border border-slate-200 dark:border-slate-700">

@@ -5,7 +5,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Clock, MapPin, Edit2, Trash2, MoreVertical, FileText, Scale, ListPlus, Copy, X, Dumbbell, Flame, Activity, Zap, AlignLeft, Heart, MessageCircle, ArrowDown, ArrowUp, Send, Plus } from 'lucide-react';
 import { generateColor, calculateWorkoutTotals, formatShortDateTime, formatDuration, getVolumeMetaphor, getCategoryColor, getRelativeTime } from './utils';
 import { UserAvatar, renderUsernameWithBadge, AdBanner } from './CommonUI';
-import { copyTextToClipboard } from './nativeBridge';
+import { copyTextToClipboard, triggerHaptic } from './nativeBridge';
 
 // --- 共通コンポーネント：ワークアウトカード ---
 function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onToggleLike, onImport, onImportItem, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick }) {
@@ -138,6 +138,22 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
   };
   const [showLikesModal, setShowLikesModal] = useState(false);
   const [showPostMenu, setShowPostMenu] = useState(false);
+  const postMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!showPostMenu) return;
+    const handleOutside = (e) => {
+      if (postMenuRef.current && !postMenuRef.current.contains(e.target)) {
+        setShowPostMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('touchstart', handleOutside, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [showPostMenu]);
   const isMyPost = post.author === currentUser;
   
   const likedUsers = post.likedUsers || [];
@@ -479,7 +495,7 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
           </div>
         </div>
         {isMyPost && onEdit && onDelete && (
-          <div className="flex gap-1 shrink-0 ml-2 relative">
+          <div ref={postMenuRef} className="flex gap-1 shrink-0 ml-2 relative">
             <button onClick={() => onEdit(post)} className="text-slate-400 hover:text-emerald-500 p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"><Edit2 size={16} /></button>
             <button onClick={() => onDelete(post.id)} className="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"><Trash2 size={16} /></button>
             <button onClick={() => setShowPostMenu(!showPostMenu)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"><MoreVertical size={16} /></button>
@@ -890,9 +906,13 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
   );
 }
 
-// --- タイムライン画面 ---
-function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser, onDelete, onEdit, accountsInfo, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, scrollToPostId, setScrollToPostId }) {
+// --- タイムライン画面（Xスタイル最上部スワイプ更新 Pull-to-Refresh 搭載） ---
+function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser, onDelete, onEdit, accountsInfo, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, scrollToPostId, setScrollToPostId, onRefresh }) {
   const [displayLimit, setDisplayLimit] = useState(10);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const pullInfoRef = useRef({ active: false, startY: 0, startX: 0, triggeredHaptic: false, dist: 0 });
+  const PULL_THRESHOLD = 56;
 
   useEffect(() => {
     if (scrollToPostId) {
@@ -916,10 +936,110 @@ function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser
     }
   }, [scrollToPostId, posts, displayLimit, setScrollToPostId]);
 
+  const handleTouchStart = (e) => {
+    if (isRefreshing || !e.touches || e.touches.length === 0) return;
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+    if (scrollTop <= 4) {
+      pullInfoRef.current = {
+        active: true,
+        startY: e.touches[0].clientY,
+        startX: e.touches[0].clientX,
+        triggeredHaptic: false,
+        dist: 0
+      };
+    } else {
+      pullInfoRef.current.active = false;
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (!pullInfoRef.current.active || isRefreshing || !e.touches || e.touches.length === 0) return;
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+    if (scrollTop > 6) {
+      pullInfoRef.current.active = false;
+      setPullDistance(0);
+      return;
+    }
+    const dy = e.touches[0].clientY - pullInfoRef.current.startY;
+    const dx = Math.abs(e.touches[0].clientX - pullInfoRef.current.startX);
+    if (dy > 6 && dy > dx * 1.2) {
+      const damped = Math.min(96, Math.pow(dy - 6, 0.8));
+      pullInfoRef.current.dist = damped;
+      setPullDistance(damped);
+      if (damped >= PULL_THRESHOLD && !pullInfoRef.current.triggeredHaptic) {
+        pullInfoRef.current.triggeredHaptic = true;
+        triggerHaptic('medium');
+      } else if (damped < PULL_THRESHOLD && pullInfoRef.current.triggeredHaptic) {
+        pullInfoRef.current.triggeredHaptic = false;
+      }
+    } else if (dy <= 0) {
+      pullInfoRef.current.dist = 0;
+      setPullDistance(0);
+    }
+  };
+
+  const handleTouchEnd = async () => {
+    if (!pullInfoRef.current.active) return;
+    pullInfoRef.current.active = false;
+    const finalDist = pullInfoRef.current.dist;
+    pullInfoRef.current.dist = 0;
+
+    if (finalDist >= PULL_THRESHOLD && onRefresh && !isRefreshing) {
+      setIsRefreshing(true);
+      setPullDistance(48);
+      try {
+        await onRefresh();
+      } finally {
+        setTimeout(() => {
+          setIsRefreshing(false);
+          setPullDistance(0);
+        }, 350);
+      }
+    } else {
+      setPullDistance(0);
+    }
+  };
+
   const displayedPosts = posts.slice(0, displayLimit);
+  const showPullIndicator = isRefreshing || pullDistance > 4;
 
   return (
-    <div className="space-y-4">
+    <div
+      className="space-y-4"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+    >
+      {/* Xスタイル Pull-to-Refresh インジケーター */}
+      <div
+        className="overflow-hidden flex items-center justify-center transition-all duration-200"
+        style={{
+          height: showPullIndicator ? `${isRefreshing ? 48 : pullDistance}px` : '0px',
+          opacity: showPullIndicator ? Math.min(1, (isRefreshing ? 48 : pullDistance) / 36) : 0
+        }}
+      >
+        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 shadow-sm text-xs font-bold text-slate-600 dark:text-slate-300">
+          {isRefreshing ? (
+            <>
+              <Activity size={15} className="text-emerald-500 animate-spin" />
+              <span>差分をチェックして更新中...</span>
+            </>
+          ) : (
+            <>
+              <ArrowDown
+                size={15}
+                className="text-emerald-500 transition-transform duration-150"
+                style={{
+                  transform: `rotate(${pullDistance >= PULL_THRESHOLD ? 180 : 0}deg)`
+                }}
+              />
+              <span>{pullDistance >= PULL_THRESHOLD ? '指を離して更新' : '下にスワイプして更新'}</span>
+            </>
+          )}
+        </div>
+      </div>
+
       <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">タイムライン</h2>
       {!posts || posts.length === 0 ? (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center mt-10 shadow-sm">

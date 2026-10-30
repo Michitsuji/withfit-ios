@@ -2,13 +2,13 @@
 // App.js — メインアプリケーションコンポーネント
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon, RefreshCw, CheckCircle } from 'lucide-react';
+import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
 import { GoogleAuthProvider, signInWithCredential, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
 import { db, appId, auth, app } from './firebase';
 import { generateId, generateFriendCode, calculateWorkoutTotals, getRelativeTime } from './utils';
-import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, NavButton } from './CommonUI';
+import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, LiquidGlassTabBar } from './CommonUI';
 import { TimelineView, WorkoutCard } from './WorkoutCard';
 import { EditWorkoutModal } from './WorkoutForm';
 import { DataView } from './DataView';
@@ -181,6 +181,21 @@ export default function App() {
             setCurrentTab('timeline');
             setScrollToPostId(nData.postId);
           }
+        } else if (data.type === 'NATIVE_TAB_SELECT' && data.tab) {
+          setShowNotifications(false);
+          if (data.isReselect) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            if (data.tab === 'record') {
+              window.dispatchEvent(new CustomEvent('returnToRecordInput'));
+            }
+          } else {
+            setCurrentTab(data.tab);
+            if (data.tab === 'record') {
+              setTimeout(() => window.dispatchEvent(new CustomEvent('returnToRecordInput')), 20);
+            }
+          }
+        } else if (data.type === 'NATIVE_PULL_REFRESH') {
+          window.dispatchEvent(new CustomEvent('triggerNativePullRefresh'));
         }
       } catch (e) {}
     };
@@ -290,15 +305,7 @@ export default function App() {
   const [pushPromptType, setPushPromptType] = useState('request');
   const [osPermission, setOsPermission] = useState('default');
 
-  const [showLocalSyncPanel, setShowLocalSyncPanel] = useState(false);
-  const [diffStatus, setDiffStatus] = useState({
-    lastCheckedAt: null,
-    added: 0,
-    modified: 0,
-    removed: 0,
-    hasRecentDiff: false,
-    isChecking: false
-  });
+
   const localCacheRef = useRef({
     accountsInfo: {},
     gyms: [],
@@ -993,10 +1000,6 @@ export default function App() {
         setNotifications(cached.notifications);
       }
       setDataLoaded({ accounts: true, gyms: true, exercises: true, workouts: true });
-      setDiffStatus(prev => ({
-        ...prev,
-        lastCheckedAt: cached.savedAt || Date.now()
-      }));
     }
   }, [currentUser]);
 
@@ -1009,14 +1012,6 @@ export default function App() {
     saveLocalDB(currentUser, localCacheRef.current);
     if (diffCounts) {
       const totalDiff = (diffCounts.added || 0) + (diffCounts.modified || 0) + (diffCounts.removed || 0);
-      setDiffStatus({
-        lastCheckedAt: Date.now(),
-        added: diffCounts.added || 0,
-        modified: diffCounts.modified || 0,
-        removed: diffCounts.removed || 0,
-        hasRecentDiff: totalDiff > 0,
-        isChecking: false
-      });
     }
   }, [currentUser]);
 
@@ -1024,7 +1019,6 @@ export default function App() {
   const handleManualDiffCheck = useCallback(async () => {
     if (!currentUser || !db) return;
     triggerHaptic('medium');
-    setDiffStatus(prev => ({ ...prev, isChecking: true }));
     let totalAdded = 0;
     let totalModified = 0;
     let totalRemoved = 0;
@@ -1095,20 +1089,31 @@ export default function App() {
       }
 
       saveLocalDB(currentUser, localCacheRef.current);
-      setDiffStatus({
-        lastCheckedAt: Date.now(),
-        added: totalAdded,
-        modified: totalModified,
-        removed: totalRemoved,
-        hasRecentDiff: (totalAdded + totalModified + totalRemoved) > 0,
-        isChecking: false
-      });
       triggerHaptic('success');
     } catch (e) {
       console.warn('Manual diff check warning:', e);
-      setDiffStatus(prev => ({ ...prev, lastCheckedAt: Date.now(), isChecking: false }));
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    const onNativeRefresh = async () => {
+      try {
+        await handleManualDiffCheck();
+      } finally {
+        postNativeMessage({ type: 'END_NATIVE_PULL_REFRESH' });
+      }
+    };
+    window.addEventListener('triggerNativePullRefresh', onNativeRefresh);
+    return () => window.removeEventListener('triggerNativePullRefresh', onNativeRefresh);
+  }, [handleManualDiffCheck]);
+
+  useEffect(() => {
+    postNativeMessage({
+      type: 'SYNC_ACTIVE_TAB',
+      tab: currentTab,
+      isLoggedIn: Boolean(currentUser)
+    });
+  }, [currentTab, currentUser]);
 
   const exercisesByChunkRef = useRef({});
 
@@ -2509,80 +2514,27 @@ export default function App() {
             <WithFitLogo className="text-indigo-500" /><span>With<span className="text-indigo-500">Fit</span></span>
           </h1>
           <div className="flex items-center gap-2.5">
-            <button onClick={handleOpenNotifications} className="relative p-2 rounded-full liquid-glass-pill-active text-slate-600 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
-              <Bell size={18} />
+            <button onClick={handleOpenNotifications} className="relative p-2 text-slate-500 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
+              <Bell size={20} />
               {unreadNotificationCount > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-sm">
                   {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
                 </span>
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                triggerHaptic('selection');
-                handleHeaderOnlineTap();
-                setShowLocalSyncPanel(prev => !prev);
-              }}
-              className="flex items-center gap-1.5 liquid-glass-pill-active px-2.5 py-1.5 rounded-full cursor-pointer select-none"
-            >
-              <div className={`w-2 h-2 rounded-full ${diffStatus.isChecking ? 'bg-amber-400 animate-ping' : isOnline ? 'bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]'}`}></div>
-              <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300">
-                {diffStatus.isChecking ? '差分確認中' : 'ローカル同期'}
-              </span>
-            </button>
-            <button onClick={() => { triggerHaptic('selection'); setShowProfileModal(true); }} className="flex items-center gap-1.5 liquid-glass-pill-active p-1 sm:px-2.5 sm:py-1 rounded-full transition-colors">
-              <UserAvatar userId={currentUser} accountsInfo={accountsInfo} size={26} className="border-transparent" />
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-200 hidden sm:inline">
+            <div onClick={handleHeaderOnlineTap} className="flex items-center gap-1.5 bg-slate-50/90 dark:bg-slate-950/90 px-2.5 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 cursor-pointer select-none">
+              <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]'}`}></div>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">{isOnline ? 'オンライン' : 'オフライン'}</span>
+            </div>
+            <button onClick={() => { triggerHaptic('selection'); setShowProfileModal(true); }} className="flex items-center gap-2 bg-slate-100/90 dark:bg-slate-800/90 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+              <UserAvatar userId={currentUser} accountsInfo={accountsInfo} size={24} className="border-transparent" />
+              <span className="text-sm font-bold text-slate-700 dark:text-slate-200 hidden sm:inline">
                 {renderUsernameWithBadge(currentUser, myInfo.displayName, accountsInfo, "font-bold text-slate-700 dark:text-slate-200")}
               </span>
             </button>
-            <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 p-1.5 rounded-full transition-colors"><LogOut size={19} /></button>
+            <button onClick={handleLogout} className="text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 p-1.5 rounded-full transition-colors"><LogOut size={20} /></button>
           </div>
         </div>
-        {showLocalSyncPanel && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowLocalSyncPanel(false)}></div>
-            <div className="absolute top-14 right-3 w-80 max-w-[calc(100vw-24px)] liquid-glass-surface bg-white/90 dark:bg-slate-900/90 border border-white/80 dark:border-slate-700/80 rounded-3xl shadow-2xl z-50 p-4 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <CheckCircle size={16} className="text-emerald-500" />
-                  <span className="text-xs font-extrabold text-slate-800 dark:text-white">ローカル保存＆差分チェック</span>
-                </div>
-                <button type="button" onClick={() => setShowLocalSyncPanel(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded-full">
-                  <X size={15} />
-                </button>
-              </div>
-              <div className="bg-slate-100/70 dark:bg-slate-950/60 rounded-2xl p-3 space-y-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-3">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">ローカル保持データ:</span>
-                  <span>記録 {posts.length}件 / 種目 {exercises.length}件</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">直近の差分判定:</span>
-                  <span className={diffStatus.hasRecentDiff ? "text-emerald-500" : "text-slate-500 dark:text-slate-400"}>
-                    {diffStatus.hasRecentDiff
-                      ? `差分反映 (+${diffStatus.added} / 更新${diffStatus.modified} / 削除${diffStatus.removed})`
-                      : '差分なし（最新状態）'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">最終チェック:</span>
-                  <span>{diffStatus.lastCheckedAt ? getRelativeTime(diffStatus.lastCheckedAt) : '起動時'}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={diffStatus.isChecking}
-                onClick={handleManualDiffCheck}
-                className="w-full py-2.5 px-3 rounded-2xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/25"
-              >
-                <RefreshCw size={14} className={diffStatus.isChecking ? "animate-spin" : ""} />
-                <span>{diffStatus.isChecking ? '差分をチェック中...' : '今すぐ差分をチェック'}</span>
-              </button>
-            </div>
-          </>
-        )}
         {activeFriends.length > 0 && (() => {
           const friendsInSameGym = activeFriends.filter(f => accountsInfo[f]?.currentGymId === myInfo?.currentGymId && myInfo?.currentGymId);
           const isSameGym = friendsInSameGym.length > 0;
@@ -2613,10 +2565,18 @@ export default function App() {
           </div>
           );
         })()}
-        {showNotifications && (
-          <>
-          <div className="fixed inset-0 z-40" onClick={() => setShowNotifications(false)}></div>
-          <div className="absolute top-16 right-3 w-80 max-w-[calc(100vw-24px)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      </header>
+
+      {/* 通知センター：header の backdrop-filter 外に配置することで画面全体の外側タップで確実に閉じる */}
+      {showNotifications && (
+        <div
+          className="fixed inset-0 z-[75]"
+          onClick={() => setShowNotifications(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="fixed top-16 right-3 w-80 max-w-[calc(100vw-24px)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-[80] overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+          >
             <div className="p-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-bold text-sm text-slate-700 dark:text-slate-300 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <Bell size={15} className="text-emerald-500" />
@@ -2647,6 +2607,13 @@ export default function App() {
                     クリア
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setShowNotifications(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full"
+                >
+                  <X size={15} />
+                </button>
               </div>
             </div>
 
@@ -2738,9 +2705,8 @@ export default function App() {
                )}
             </div>
           </div>
-          </>
-        )}
-      </header>
+        </div>
+      )}
 
       {myInfo?.isTraining && (
         <div className="fixed inset-0 z-[25] pointer-events-none overflow-hidden" style={{ perspective: 1000 }}>
@@ -2846,7 +2812,7 @@ export default function App() {
              <button onClick={handleLinkGoogle} className="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors">連携</button>
           </div>
         )}
-        {currentTab === 'timeline' && <TimelineView posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
+        {currentTab === 'timeline' && <TimelineView onRefresh={handleManualDiffCheck} posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
         {currentTab === 'exercises' && <ExercisesView gyms={allGyms} exercises={exercises} posts={visiblePosts} accountsInfo={accountsInfo} currentUser={currentUser} myInfo={myInfo} setCurrentTab={setCurrentTab} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'record' && <RecordView onStart={handleStartTraining} onPost={handlePostWorkout} onCancel={handleCancelTraining} onRequestJointTraining={handleRequestJointTraining} onAcceptJointTraining={handleAcceptJointTraining} onRejectJointTraining={handleRejectJointTraining} onCancelJointTraining={handleCancelJointTraining} onImportItem={handleImportExerciseItem} myInfo={myInfo} gyms={allGyms} exercises={exercises} workoutItems={draftWorkoutItems} setWorkoutItems={setDraftWorkoutItems} selectedCategories={selectedCategories} setSelectedCategories={setSelectedCategories} posts={visiblePosts} currentUser={currentUser} isManual={isRecordManual} setIsManual={setIsRecordManual} onActiveExerciseChange={handleActiveExerciseChange} accountsInfo={accountsInfo} />}
         {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
@@ -2887,73 +2853,46 @@ export default function App() {
         </div>
       )}
 
-      <nav
-        className="fixed left-3 right-3 z-30 max-w-[400px] mx-auto pointer-events-none"
-        style={{ bottom: 'max(6px, calc(env(safe-area-inset-bottom, 0px) - 14px))' }}
-      >
-        <div className="liquid-glass-tabbar pointer-events-auto rounded-full p-1 flex items-center justify-between gap-0.5">
-          <NavButton
-            icon={<Home size={20} />}
-            label="ホーム"
-            isActive={currentTab === 'timeline'}
-            onClick={() => {
-              if (currentTab === 'timeline') window.scrollTo({ top: 0, behavior: 'smooth' });
-              else setCurrentTab('timeline');
-            }}
-          />
-          <NavButton
-            icon={<Dumbbell size={20} />}
-            label="種目"
-            isActive={currentTab === 'exercises'}
-            onClick={() => {
-              if (currentTab === 'exercises') window.scrollTo({ top: 0, behavior: 'smooth' });
-              else setCurrentTab('exercises');
-            }}
-          />
-          <NavButton
-            icon={myInfo.isTraining ? <Clock className="animate-pulse" size={20} /> : <PlusCircle size={21} />}
-            label={myInfo.isTraining ? "記録中" : "記録"}
-            isActive={currentTab === 'record'}
-            isPrimary
-            isTraining={myInfo.isTraining}
-            onClick={() => {
-              if (currentTab === 'record') {
+      {!(typeof window !== 'undefined' && window.WithFitUsesNativeTabBar) && (
+        <nav
+          className="fixed left-3 right-3 z-30 max-w-[400px] mx-auto pointer-events-none"
+          style={{ bottom: 'max(6px, calc(env(safe-area-inset-bottom, 0px) - 14px))' }}
+        >
+          <LiquidGlassTabBar
+            activeTabKey={currentTab}
+            onSelectTab={(tabKey, isReselect) => {
+              if (isReselect) {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
-                if (myInfo?.isTraining) {
+                if (tabKey === 'record' && myInfo?.isTraining) {
                   window.dispatchEvent(new CustomEvent('returnToRecordInput'));
                 }
               } else {
-                setCurrentTab('record');
-                if (myInfo?.isTraining) {
+                setCurrentTab(tabKey);
+                if (tabKey === 'record' && myInfo?.isTraining) {
                   setTimeout(() => window.dispatchEvent(new CustomEvent('returnToRecordInput')), 20);
                 }
               }
             }}
+            tabs={[
+              { key: 'timeline', label: 'ホーム', icon: <Home size={20} /> },
+              { key: 'exercises', label: '種目', icon: <Dumbbell size={20} /> },
+              {
+                key: 'record',
+                label: myInfo.isTraining ? '記録中' : '記録',
+                icon: myInfo.isTraining ? <Clock className="animate-pulse" size={20} /> : <PlusCircle size={21} />,
+                isPrimary: true,
+                isTraining: Boolean(myInfo.isTraining)
+              },
+              { key: 'data', label: 'データ', icon: <CalendarIcon size={20} /> },
+              { key: 'friends', label: 'フレンド', icon: <Users size={20} /> }
+            ]}
           />
-          <NavButton
-            icon={<CalendarIcon size={20} />}
-            label="データ"
-            isActive={currentTab === 'data'}
-            onClick={() => {
-              if (currentTab === 'data') window.scrollTo({ top: 0, behavior: 'smooth' });
-              else setCurrentTab('data');
-            }}
-          />
-          <NavButton
-            icon={<Users size={20} />}
-            label="フレンド"
-            isActive={currentTab === 'friends'}
-            onClick={() => {
-              if (currentTab === 'friends') window.scrollTo({ top: 0, behavior: 'smooth' });
-              else setCurrentTab('friends');
-            }}
-          />
-        </div>
-      </nav>
+        </nav>
+      )}
 
       {showPushPrompt && (
-        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-sm z-[100] flex flex-col items-center justify-end sm:justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-bottom-10 sm:slide-in-from-bottom-0">
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-sm z-[100] flex flex-col items-center justify-end sm:justify-center p-4 animate-in fade-in duration-300" onClick={() => setShowPushPrompt(false)}>
+          <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center animate-in slide-in-from-bottom-10 sm:slide-in-from-bottom-0" onClick={e => e.stopPropagation()}>
             {pushPromptType === 'warning' ? (
               <>
                 <div className="w-16 h-16 bg-rose-100 dark:bg-rose-950/50 rounded-full flex items-center justify-center mb-4 text-rose-500">

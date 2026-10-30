@@ -955,8 +955,321 @@ function NavButton({ icon, label, isActive, onClick, isPrimary, isTraining }) {
   );
 }
 
+// --- iOS 26 Liquid Glass 光学屈折SVGフィルター ---
+function LiquidGlassSvgFilters() {
+  return (
+    <svg width="0" height="0" className="fixed pointer-events-none opacity-0" aria-hidden="true">
+      <defs>
+        <filter id="ios-liquid-glass-lens" x="-10%" y="-10%" width="120%" height="120%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="0.6" result="soft" />
+          <feSpecularLighting in="soft" surfaceScale="2.5" specularConstant="0.85" specularExponent="28" lightingColor="#ffffff" result="spec">
+            <fePointLight x="120" y="-60" z="160" />
+          </feSpecularLighting>
+          <feComposite in="spec" in2="SourceAlpha" operator="in" result="specMask" />
+          <feMerge>
+            <feMergeNode in="SourceGraphic" />
+            <feMergeNode in="specMask" />
+          </feMerge>
+        </filter>
+      </defs>
+    </svg>
+  );
+}
+
+// --- iOS 26 本物のリキッドグラス・スライド＆タッチスクラブ対応タブバー ---
+function LiquidGlassTabBar({ tabs, activeTabKey, onSelectTab }) {
+  const barRef = useRef(null);
+  const count = tabs.length;
+  const activeIdx = Math.max(0, tabs.findIndex(t => t.key === activeTabKey));
+
+  const [scrubIndex, setScrubIndex] = useState(null);
+  const [isMorphing, setIsMorphing] = useState(false);
+  const lastHapticIdxRef = useRef(activeIdx);
+  const touchStateRef = useRef({ active: false, startX: 0, startY: 0, moved: false });
+  const morphTimerRef = useRef(null);
+
+  useEffect(() => {
+    lastHapticIdxRef.current = activeIdx;
+    setIsMorphing(true);
+    if (morphTimerRef.current) clearTimeout(morphTimerRef.current);
+    morphTimerRef.current = setTimeout(() => setIsMorphing(false), 360);
+    return () => {
+      if (morphTimerRef.current) clearTimeout(morphTimerRef.current);
+    };
+  }, [activeIdx]);
+
+  const computeContinuousIndex = (clientX) => {
+    if (!barRef.current) return activeIdx;
+    const rect = barRef.current.getBoundingClientRect();
+    const pad = 4;
+    const innerW = Math.max(1, rect.width - pad * 2);
+    const slotW = innerW / count;
+    const raw = (clientX - rect.left - pad) / slotW - 0.5;
+    return Math.max(0, Math.min(count - 1, raw));
+  };
+
+  const handleTouchStart = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    const t = e.touches[0];
+    touchStateRef.current = {
+      active: true,
+      startX: t.clientX,
+      startY: t.clientY,
+      moved: false
+    };
+  };
+
+  const handleTouchMove = (e) => {
+    if (!touchStateRef.current.active || !e.touches || e.touches.length === 0) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - touchStateRef.current.startX);
+    const dy = Math.abs(t.clientY - touchStateRef.current.startY);
+
+    if (!touchStateRef.current.moved && dx > 5 && dx > dy) {
+      touchStateRef.current.moved = true;
+      triggerHaptic('light');
+    }
+
+    if (touchStateRef.current.moved) {
+      if (e.cancelable) e.preventDefault();
+      const cIdx = computeContinuousIndex(t.clientX);
+      setScrubIndex(cIdx);
+      const snappedIdx = Math.round(cIdx);
+      if (snappedIdx !== lastHapticIdxRef.current && tabs[snappedIdx]) {
+        lastHapticIdxRef.current = snappedIdx;
+        triggerHaptic('selection');
+        onSelectTab(tabs[snappedIdx].key, false);
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (!touchStateRef.current.active) return;
+    const wasMoved = touchStateRef.current.moved;
+    touchStateRef.current.active = false;
+    touchStateRef.current.moved = false;
+
+    if (wasMoved && scrubIndex !== null) {
+      const finalIdx = Math.round(scrubIndex);
+      setScrubIndex(null);
+      if (tabs[finalIdx]) {
+        triggerHaptic('light');
+        onSelectTab(tabs[finalIdx].key, false);
+      }
+    } else {
+      setScrubIndex(null);
+    }
+  };
+
+  const isScrubbing = scrubIndex !== null;
+  const displayIndex = isScrubbing ? scrubIndex : activeIdx;
+  const scaleX = isScrubbing ? 1.12 : isMorphing ? 1.05 : 1;
+  const scaleY = isScrubbing ? 1.16 : isMorphing ? 1.03 : 1;
+
+  return (
+    <>
+      <LiquidGlassSvgFilters />
+      <div
+        ref={barRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        className="liquid-glass-capsule pointer-events-auto relative rounded-full p-1 flex items-center justify-between select-none touch-pan-y"
+      >
+        {/* スライド＆指追従する本物のリキッドグラス液滴ピル */}
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute top-1 bottom-1 left-1 rounded-full ${
+            isScrubbing ? 'liquid-glass-droplet-scrubbing z-20' : 'liquid-glass-droplet z-0'
+          }`}
+          style={{
+            width: `calc((100% - 8px) / ${count})`,
+            transform: `translate3d(${displayIndex * 100}%, 0, 0) scale(${scaleX}, ${scaleY})`,
+            transition: isScrubbing
+              ? 'transform 0.04s linear, background 0.15s ease, box-shadow 0.15s ease'
+              : 'transform 0.38s cubic-bezier(0.22, 1.28, 0.36, 1), background 0.25s ease, box-shadow 0.25s ease'
+          }}
+        />
+
+        {tabs.map((tab, idx) => {
+          const isSelected = isScrubbing ? Math.round(scrubIndex) === idx : activeIdx === idx;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => {
+                triggerHaptic(tab.isPrimary ? 'medium' : 'selection');
+                onSelectTab(tab.key, activeTabKey === tab.key);
+              }}
+              className={`relative z-10 flex-1 h-[50px] rounded-full flex flex-col items-center justify-center gap-0.5 select-none transition-colors duration-200 ${
+                tab.isTraining
+                  ? 'text-amber-500 dark:text-amber-400'
+                  : isSelected
+                  ? 'text-indigo-600 dark:text-indigo-400'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {tab.isTraining && (
+                <span className="absolute top-1.5 right-3.5 w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-ping" />
+              )}
+              <div
+                className="transition-transform duration-200"
+                style={{
+                  transform: isSelected ? (isScrubbing ? 'scale(1.16) translateY(-1px)' : 'scale(1.06)') : 'scale(1)'
+                }}
+              >
+                {tab.icon}
+              </div>
+              <span className={`text-[10px] leading-none tracking-tight ${isSelected || tab.isTraining ? 'font-extrabold' : 'font-semibold'}`}>
+                {tab.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+// --- iOS 26 リキッドグラス・スライド＆タッチスクラブ対応セグメントコントロール ---
+function LiquidGlassSegmented({ options, value, onChange, className = "" }) {
+  const segRef = useRef(null);
+  const count = options.length;
+  const activeIdx = Math.max(0, options.findIndex(o => o.value === value));
+
+  const [scrubIndex, setScrubIndex] = useState(null);
+  const [isMorphing, setIsMorphing] = useState(false);
+  const lastHapticIdxRef = useRef(activeIdx);
+  const touchStateRef = useRef({ active: false, startX: 0, startY: 0, moved: false });
+  const morphTimerRef = useRef(null);
+
+  useEffect(() => {
+    lastHapticIdxRef.current = activeIdx;
+    setIsMorphing(true);
+    if (morphTimerRef.current) clearTimeout(morphTimerRef.current);
+    morphTimerRef.current = setTimeout(() => setIsMorphing(false), 340);
+    return () => {
+      if (morphTimerRef.current) clearTimeout(morphTimerRef.current);
+    };
+  }, [activeIdx]);
+
+  const computeContinuousIndex = (clientX) => {
+    if (!segRef.current) return activeIdx;
+    const rect = segRef.current.getBoundingClientRect();
+    const pad = 4;
+    const innerW = Math.max(1, rect.width - pad * 2);
+    const slotW = innerW / count;
+    const raw = (clientX - rect.left - pad) / slotW - 0.5;
+    return Math.max(0, Math.min(count - 1, raw));
+  };
+
+  const handleTouchStart = (e) => {
+    if (!e.touches || e.touches.length === 0) return;
+    const t = e.touches[0];
+    touchStateRef.current = { active: true, startX: t.clientX, startY: t.clientY, moved: false };
+  };
+
+  const handleTouchMove = (e) => {
+    if (!touchStateRef.current.active || !e.touches || e.touches.length === 0) return;
+    const t = e.touches[0];
+    const dx = Math.abs(t.clientX - touchStateRef.current.startX);
+    const dy = Math.abs(t.clientY - touchStateRef.current.startY);
+    if (!touchStateRef.current.moved && dx > 5 && dx > dy) {
+      touchStateRef.current.moved = true;
+      triggerHaptic('light');
+    }
+    if (touchStateRef.current.moved) {
+      if (e.cancelable) e.preventDefault();
+      const cIdx = computeContinuousIndex(t.clientX);
+      setScrubIndex(cIdx);
+      const snappedIdx = Math.round(cIdx);
+      if (snappedIdx !== lastHapticIdxRef.current && options[snappedIdx]) {
+        lastHapticIdxRef.current = snappedIdx;
+        triggerHaptic('selection');
+        onChange(options[snappedIdx].value);
+      }
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (!touchStateRef.current.active) return;
+    const wasMoved = touchStateRef.current.moved;
+    touchStateRef.current.active = false;
+    touchStateRef.current.moved = false;
+    if (wasMoved && scrubIndex !== null) {
+      const finalIdx = Math.round(scrubIndex);
+      setScrubIndex(null);
+      if (options[finalIdx]) {
+        triggerHaptic('light');
+        onChange(options[finalIdx].value);
+      }
+    } else {
+      setScrubIndex(null);
+    }
+  };
+
+  const isScrubbing = scrubIndex !== null;
+  const displayIndex = isScrubbing ? scrubIndex : activeIdx;
+  const scaleX = isScrubbing ? 1.06 : isMorphing ? 1.03 : 1;
+  const scaleY = isScrubbing ? 1.10 : isMorphing ? 1.02 : 1;
+
+  return (
+    <div
+      ref={segRef}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+      className={`liquid-glass-capsule relative rounded-full p-1 flex items-center select-none touch-pan-y ${className}`}
+    >
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute top-1 bottom-1 left-1 rounded-full ${
+          isScrubbing ? 'liquid-glass-droplet-scrubbing z-20' : 'liquid-glass-droplet z-0'
+        }`}
+        style={{
+          width: `calc((100% - 8px) / ${count})`,
+          transform: `translate3d(${displayIndex * 100}%, 0, 0) scale(${scaleX}, ${scaleY})`,
+          transition: isScrubbing
+            ? 'transform 0.04s linear'
+            : 'transform 0.36s cubic-bezier(0.22, 1.26, 0.36, 1)'
+        }}
+      />
+      {options.map((opt, idx) => {
+        const isSelected = isScrubbing ? Math.round(scrubIndex) === idx : activeIdx === idx;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => {
+              triggerHaptic('selection');
+              onChange(opt.value);
+            }}
+            className={`relative z-10 flex-1 py-2.5 px-3 rounded-full text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors duration-200 ${
+              isSelected
+                ? (opt.activeColorClass || 'text-emerald-600 dark:text-emerald-400')
+                : 'text-slate-500 dark:text-slate-400'
+            }`}
+          >
+            {opt.icon}
+            <span>{opt.label}</span>
+            {opt.badge !== undefined && opt.badge > 0 && (
+              <span className="ml-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500 text-white leading-none">
+                {opt.badge}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export {
   WithFitLogo,
+  LiquidGlassTabBar,
+  LiquidGlassSegmented,
   renderUsernameWithBadge,
   UserAvatar,
   TimerDisplay,

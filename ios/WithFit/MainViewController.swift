@@ -2,25 +2,40 @@ import UIKit
 import WebKit
 import UserNotifications
 
-final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
+final class MainViewController: UITabBarController, UITabBarControllerDelegate, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
 
     static weak var shared: MainViewController?
 
     private var webView: WKWebView!
+    private var refreshControl: UIRefreshControl!
     private var popupWebView: WKWebView?
     private var popupNavController: UINavigationController?
     private let statusBarBackgroundView = UIView()
     private var currentStatusBarStyle: UIStatusBarStyle = .darkContent
     private var hasRequestedInitialNotifAuth = false
 
+    private let tabKeys = ["timeline", "exercises", "record", "data", "friends"]
+    private var tabVCs: [UIViewController] = []
+    private var isReselectingTab = false
+    private var webViewConstraints: [NSLayoutConstraint] = []
+
     override var preferredStatusBarStyle: UIStatusBarStyle {
         return currentStatusBarStyle
+    }
+
+    override var childForStatusBarStyle: UIViewController? {
+        return nil
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         Self.shared = self
-        setupViews()
+        self.delegate = self
+        setupNativeLiquidGlassTabs()
+        setupWebView()
+        if let firstVC = tabVCs.first {
+            attachWebView(to: firstVC)
+        }
         loadWithFitApp()
     }
 
@@ -34,11 +49,44 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         }
     }
 
-    private func setupViews() {
+    // MARK: - Genuine iOS 26 Native UITabBarController Setup (Liquid Glass UI)
+    private func setupNativeLiquidGlassTabs() {
+        let specs: [(key: String, title: String, icon: String, selectedIcon: String)] = [
+            ("timeline", "ホーム", "house", "house.fill"),
+            ("exercises", "種目", "dumbbell", "dumbbell.fill"),
+            ("record", "記録", "plus.circle", "plus.circle.fill"),
+            ("data", "データ", "calendar", "calendar"),
+            ("friends", "フレンド", "person.2", "person.2.fill")
+        ]
+
+        var controllers: [UIViewController] = []
+        for (idx, spec) in specs.enumerated() {
+            let vc = UIViewController()
+            vc.edgesForExtendedLayout = .all
+            vc.extendedLayoutIncludesOpaqueBars = true
+            vc.view.backgroundColor = .clear
+
+            let item = UITabBarItem(
+                title: spec.title,
+                image: UIImage(systemName: spec.icon),
+                selectedImage: UIImage(systemName: spec.selectedIcon)
+            )
+            item.tag = idx
+            vc.tabBarItem = item
+            controllers.append(vc)
+        }
+
+        self.tabVCs = controllers
+        self.viewControllers = controllers
+        self.selectedIndex = 0
+        self.tabBar.isHidden = true
+        self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0) // Indigo-600
+    }
+
+    private func setupWebView() {
         view.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
         statusBarBackgroundView.backgroundColor = .white
         statusBarBackgroundView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(statusBarBackgroundView)
 
         let config = WKWebViewConfiguration()
         config.processPool = WKProcessPool()
@@ -53,6 +101,7 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         window.__WITHFIT_NATIVE_DB__ = \(savedNativeDBJSON);
         window.__WITHFIT_OS_PERMISSION__ = 'default';
         window.WithFitNative = true;
+        window.WithFitUsesNativeTabBar = true;
         window.ReactNativeWebView = {
           postMessage: function(msgStr) {
             try {
@@ -76,32 +125,85 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
-        webView.scrollView.bounces = false
-        webView.scrollView.alwaysBounceVertical = false
+        // iOS純正のバウンススクロール＆下に引っ張って更新（UIRefreshControl）を有効化
+        webView.scrollView.bounces = true
+        webView.scrollView.alwaysBounceVertical = true
         webView.scrollView.alwaysBounceHorizontal = false
         webView.scrollView.showsHorizontalScrollIndicator = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
-        view.addSubview(webView)
-
-        NSLayoutConstraint.activate([
-            statusBarBackgroundView.topAnchor.constraint(equalTo: view.topAnchor),
-            statusBarBackgroundView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            statusBarBackgroundView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBarBackgroundView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-
-            webView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
+        // iOS純正 Pull-to-Refresh (Xと同じ引っ張って更新)
+        let rc = UIRefreshControl()
+        rc.tintColor = UIColor(red: 16/255, green: 185/255, blue: 129/255, alpha: 1.0)
+        rc.addTarget(self, action: #selector(handleNativePullToRefresh), for: .valueChanged)
+        webView.scrollView.refreshControl = rc
+        self.refreshControl = rc
 
         let settingsGesture = UITapGestureRecognizer(target: self, action: #selector(showNativeDeveloperMenu))
         settingsGesture.numberOfTouchesRequired = 3
         settingsGesture.numberOfTapsRequired = 2
         view.addGestureRecognizer(settingsGesture)
+    }
+
+    private func attachWebView(to targetVC: UIViewController) {
+        guard let container = targetVC.view else { return }
+        if webView.superview === container { return }
+
+        NSLayoutConstraint.deactivate(webViewConstraints)
+        statusBarBackgroundView.removeFromSuperview()
+        webView.removeFromSuperview()
+
+        container.addSubview(statusBarBackgroundView)
+        container.addSubview(webView)
+
+        let constraints = [
+            statusBarBackgroundView.topAnchor.constraint(equalTo: container.topAnchor),
+            statusBarBackgroundView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            statusBarBackgroundView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            statusBarBackgroundView.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+
+            webView.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(constraints)
+        self.webViewConstraints = constraints
+    }
+
+    @objc private func handleNativePullToRefresh() {
+        NativeAudioAndTimerManager.shared.triggerHaptic(style: "medium")
+        sendToWeb(payload: [
+            "type": "NATIVE_PULL_REFRESH"
+        ])
+        // 万一オフライン等で応答が遅れた場合でも最大3秒でスピナーを閉じる安全タイマー
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            if self?.refreshControl.isRefreshing == true {
+                self?.refreshControl.endRefreshing()
+            }
+        }
+    }
+
+    // MARK: - UITabBarControllerDelegate (Native iOS 26 Liquid Glass Tab Selection)
+    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        isReselectingTab = (viewController === selectedViewController)
+        attachWebView(to: viewController)
+        return true
+    }
+
+    func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
+        let idx = viewController.tabBarItem.tag
+        guard idx >= 0 && idx < tabKeys.count else { return }
+        let tabKey = tabKeys[idx]
+        webView.scrollView.refreshControl = (tabKey == "timeline") ? refreshControl : nil
+        sendToWeb(payload: [
+            "type": "NATIVE_TAB_SELECT",
+            "tab": tabKey,
+            "isReselect": isReselectingTab
+        ])
     }
 
     private func loadWithFitApp() {
@@ -157,6 +259,27 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         case "SET_TRAINING_STATE":
             let isTraining = payload["isTraining"] as? Bool ?? false
             NativeAudioAndTimerManager.shared.setTrainingState(isTraining: isTraining)
+            updateRecordTabTrainingState(isTraining: isTraining)
+
+        case "SYNC_ACTIVE_TAB":
+            let tab = payload["tab"] as? String ?? "timeline"
+            let isLoggedIn = payload["isLoggedIn"] as? Bool ?? true
+            DispatchQueue.main.async {
+                self.tabBar.isHidden = !isLoggedIn
+                self.webView.scrollView.refreshControl = (isLoggedIn && tab == "timeline") ? self.refreshControl : nil
+                if let idx = self.tabKeys.firstIndex(of: tab), idx != self.selectedIndex {
+                    let targetVC = self.tabVCs[idx]
+                    self.attachWebView(to: targetVC)
+                    self.selectedIndex = idx
+                }
+            }
+
+        case "END_NATIVE_PULL_REFRESH":
+            DispatchQueue.main.async {
+                if self.refreshControl.isRefreshing {
+                    self.refreshControl.endRefreshing()
+                }
+            }
 
         case "SHOW_LOCAL_NOTIFICATION":
             let id = payload["id"] as? String ?? "notif_\(Date().timeIntervalSince1970)"
@@ -206,6 +329,25 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
 
         default:
             break
+        }
+    }
+
+    private func updateRecordTabTrainingState(isTraining: Bool) {
+        DispatchQueue.main.async {
+            guard self.tabVCs.count > 2 else { return }
+            let recordItem = self.tabVCs[2].tabBarItem
+            if isTraining {
+                recordItem?.title = "記録中"
+                recordItem?.image = UIImage(systemName: "timer")
+                recordItem?.selectedImage = UIImage(systemName: "timer")
+                recordItem?.badgeValue = "●"
+                recordItem?.badgeColor = UIColor.systemOrange
+            } else {
+                recordItem?.title = "記録"
+                recordItem?.image = UIImage(systemName: "plus.circle")
+                recordItem?.selectedImage = UIImage(systemName: "plus.circle.fill")
+                recordItem?.badgeValue = nil
+            }
         }
     }
 
@@ -294,18 +436,26 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
                 self.statusBarBackgroundView.backgroundColor = UIColor(red: 30/255, green: 41/255, blue: 59/255, alpha: 1.0)
                 self.view.backgroundColor = UIColor(red: 15/255, green: 23/255, blue: 42/255, alpha: 1.0)
                 self.currentStatusBarStyle = .lightContent
+                self.overrideUserInterfaceStyle = .dark
+                self.tabBar.tintColor = UIColor(red: 52/255, green: 211/255, blue: 153/255, alpha: 1.0)
             case "ocean":
                 self.statusBarBackgroundView.backgroundColor = UIColor(red: 3/255, green: 42/255, blue: 74/255, alpha: 1.0)
                 self.view.backgroundColor = UIColor(red: 2/255, green: 21/255, blue: 38/255, alpha: 1.0)
                 self.currentStatusBarStyle = .lightContent
+                self.overrideUserInterfaceStyle = .dark
+                self.tabBar.tintColor = UIColor(red: 56/255, green: 189/255, blue: 248/255, alpha: 1.0)
             case "pop":
                 self.statusBarBackgroundView.backgroundColor = .white
                 self.view.backgroundColor = UIColor(red: 254/255, green: 249/255, blue: 195/255, alpha: 1.0)
                 self.currentStatusBarStyle = .darkContent
+                self.overrideUserInterfaceStyle = .light
+                self.tabBar.tintColor = UIColor(red: 236/255, green: 72/255, blue: 153/255, alpha: 1.0)
             default:
                 self.statusBarBackgroundView.backgroundColor = .white
                 self.view.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
                 self.currentStatusBarStyle = .darkContent
+                self.overrideUserInterfaceStyle = .light
+                self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0)
             }
             self.setNeedsStatusBarAppearanceUpdate()
         }

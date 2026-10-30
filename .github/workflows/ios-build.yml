@@ -10,14 +10,23 @@ permissions:
 
 jobs:
   build-ios:
-    name: Cloud macOS Xcode Build (.ipa)
-    runs-on: macos-latest
+    name: Cloud macOS 26 Xcode Build (.ipa)
+    runs-on: macos-26
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Select Latest Xcode (iOS 26 SDK for Native Liquid Glass)
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$LATEST_XCODE" ]; then
+            echo "Selecting Xcode: $LATEST_XCODE"
+            sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          fi
+          xcodebuild -version
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -93,5 +102,5 @@ jobs:
           else
             gh release create ios-latest WithFit-iOS.ipa \
               --title "WithFit iOS Native App (Latest)" \
-              --notes "Windows PC（AltStore / SideStore / Sideloadly）からiPhoneへ直接インストール可能な最新のiOSネイティブアプリ（WithFit-iOS.ipa）です。"
+              --notes "iOS 26 純正 Liquid Glass UITabBar 対応の最新 iOS ネイティブアプリ（WithFit-iOS.ipa）です。"
           fi

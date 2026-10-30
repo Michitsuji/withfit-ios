@@ -7,7 +7,7 @@ import { Target, X, AlignLeft, Trash2, CheckCircle, ArrowUp, ArrowDown, Zap, Plu
 import { setDoc, doc, deleteField } from 'firebase/firestore';
 import { db, appId } from './firebase';
 import { formatDateFromTimestamp, formatDateWithDay, generateId, MASTER_USER, getCategoryColor, MUSCLE_CATEGORIES } from './utils';
-import { FormInput, UserAvatar, CategoryFilterGrid } from './CommonUI';
+import { FormInput, UserAvatar, CategoryFilterGrid, LiquidGlassSegmented } from './CommonUI';
 import { WorkoutItemForm, ReorderItemsModal } from './WorkoutForm';
 
 let globalRecordHorizontalScroll = 0;
@@ -49,8 +49,8 @@ function ProgramGeneratorModal({ isOpen, onClose, onGenerate, exercises }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950/40">
           <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
             <Target size={18} className="text-indigo-500"/> プログラム自動作成
@@ -989,46 +989,34 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
   const toggleCategory = (cat) => setSelectedCategories(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]);
 
   const modeSwitchBar = (
-    <div className="liquid-glass-segmented rounded-2xl p-1 flex items-center gap-1 mb-4">
-      <button
-        type="button"
-        onClick={() => {
-          triggerHaptic('selection');
-          setIsMetricsOnlyMode(false);
+    <LiquidGlassSegmented
+      className="mb-4"
+      value={showDashboard ? 'program' : 'record'}
+      onChange={(val) => {
+        setIsMetricsOnlyMode(false);
+        if (val === 'program') {
+          setShowDashboard(true);
+        } else {
           setShowDashboard(false);
           if (workoutItems.length === 0) addExerciseItem(null);
-        }}
-        className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-          !showDashboard && !isMetricsOnlyMode
-            ? 'liquid-glass-segment-active text-emerald-600 dark:text-emerald-400'
-            : 'text-slate-500 dark:text-slate-400'
-        }`}
-      >
-        <Dumbbell size={15} />
-        <span>{myInfo?.isTraining ? 'ワークアウト記録中' : 'トレーニング記録'}</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          triggerHaptic('selection');
-          setIsMetricsOnlyMode(false);
-          setShowDashboard(true);
-        }}
-        className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-          showDashboard && !isMetricsOnlyMode
-            ? 'liquid-glass-segment-active text-indigo-600 dark:text-indigo-400'
-            : 'text-slate-500 dark:text-slate-400'
-        }`}
-      >
-        <Target size={15} />
-        <span>プログラム管理</span>
-        {activeProgramsList.length > 0 && (
-          <span className="ml-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500 text-white leading-none">
-            {activeProgramsList.length}
-          </span>
-        )}
-      </button>
-    </div>
+        }
+      }}
+      options={[
+        {
+          value: 'record',
+          label: myInfo?.isTraining ? 'ワークアウト記録中' : 'トレーニング記録',
+          icon: <Dumbbell size={15} />,
+          activeColorClass: 'text-emerald-600 dark:text-emerald-400'
+        },
+        {
+          value: 'program',
+          label: 'プログラム管理',
+          icon: <Target size={15} />,
+          badge: activeProgramsList.length,
+          activeColorClass: 'text-indigo-600 dark:text-indigo-400'
+        }
+      ]}
+    />
   );
 
   if (isMetricsOnlyMode) {
