@@ -1773,8 +1773,12 @@ export default function App() {
 
   useEffect(() => {
     const gymName = allGyms.find(g => g.id === myInfo?.currentGymId)?.name || 'ジム';
-    setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName);
-  }, [myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.currentGymId, allGyms]);
+    const exerciseCount = (draftWorkoutItems || []).filter(i => i.exerciseName).length;
+    const currentItem = (draftWorkoutItems || []).find(i => i.exerciseName && i.exerciseName === myInfo?.currentExerciseName);
+    const totalSets = currentItem?.sets?.length || 0;
+    const completedSets = (currentItem?.sets || []).filter(s => s.done).length;
+    setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName, myInfo?.currentExerciseName || '', exerciseCount, completedSets, totalSets);
+  }, [myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.currentGymId, myInfo?.currentExerciseName, draftWorkoutItems, allGyms]);
 
   useEffect(() => {
     syncNativeTheme(myInfo?.theme || 'light');

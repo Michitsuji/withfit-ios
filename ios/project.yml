@@ -32,3 +32,22 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         ENABLE_BITCODE: NO
+    dependencies:
+      - target: WithFitLiveActivity
+        embed: true
+  WithFitLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - path: WithFitLiveActivity
+        excludes:
+          - "Info.plist"
+      - path: WithFit/TrainingActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.michitsuji.withfit.liveactivity
+        INFOPLIST_FILE: WithFitLiveActivity/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_BITCODE: NO
+        SKIP_INSTALL: YES
