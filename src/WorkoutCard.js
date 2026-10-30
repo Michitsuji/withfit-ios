@@ -5,6 +5,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Clock, MapPin, Edit2, Trash2, MoreVertical, FileText, Scale, ListPlus, Copy, X, Dumbbell, Flame, Activity, Zap, AlignLeft, Heart, MessageCircle, ArrowDown, ArrowUp, Send, Plus } from 'lucide-react';
 import { generateColor, calculateWorkoutTotals, formatShortDateTime, formatDuration, getVolumeMetaphor, getCategoryColor, getRelativeTime } from './utils';
 import { UserAvatar, renderUsernameWithBadge, AdBanner } from './CommonUI';
+import { copyTextToClipboard } from './nativeBridge';
 
 // --- 共通コンポーネント：ワークアウトカード ---
 function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onToggleLike, onImport, onImportItem, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick }) {

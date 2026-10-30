@@ -2,6 +2,7 @@
 // WorkoutForm.js — ワークアウト入力フォーム・種目検索サジェスト・種目並び替え・編集モーダル
 // ==========================================
 import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { triggerHaptic } from './nativeBridge';
 import { CheckCircle, Trash2, Clock, GripVertical, X, TrendingDown, Plus, Zap, Edit2, ArrowUp, ArrowDown, Settings, ListPlus, Copy, Search, ChevronDown } from 'lucide-react';
 import { generateId, formatDateWithDay, formatDateFromTimestamp, formatTimeFromTimestamp, MASTER_USER, getCategoryColor } from './utils';
 import { FormInput, CategoryFilterGrid } from './CommonUI';

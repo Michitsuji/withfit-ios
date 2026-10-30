@@ -18,7 +18,10 @@ targets:
     sources:
       - path: WithFit
         excludes:
+          - "WebBundle"
           - "WebBundle/**"
+          - "Info.plist"
+          - "WithFit.entitlements"
       - path: WithFit/WebBundle
         type: folder
         buildPhase: resources

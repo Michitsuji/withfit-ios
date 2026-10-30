@@ -50,11 +50,8 @@ jobs:
           cp -R build/* ios/WithFit/WebBundle/
           cp -f public/alarm.mp3 ios/WithFit/alarm.mp3
 
-      - name: Generate Xcode Project & Build Native iOS App
+      - name: Build Native iOS App with Xcode
         run: |
-          if command -v xcodegen >/dev/null 2>&1; then
-            (cd ios && xcodegen generate)
-          fi
           xcodebuild \
             -project ios/WithFit.xcodeproj \
             -target WithFit \
@@ -92,5 +89,5 @@ jobs:
           else
             gh release create ios-latest WithFit-iOS.ipa \
               --title "WithFit iOS Native App (Latest)" \
-              --notes "Windows PC（Sideloadly / AltStore / SideStore）からiPhoneへ直接インストール可能な最新のiOSネイティブアプリ（WithFit-iOS.ipa）です。"
+              --notes "Windows PC（AltStore / SideStore / Sideloadly）からiPhoneへ直接インストール可能な最新のiOSネイティブアプリ（WithFit-iOS.ipa）です。"
           fi

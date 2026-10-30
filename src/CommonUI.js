@@ -2,6 +2,7 @@
 // CommonUI.js — 共通UIコンポーネント・カスタムフック・アイコン
 // ==========================================
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { triggerHaptic } from './nativeBridge';
 import { AlignLeft, Edit2 } from 'lucide-react';
 import { MASTER_USER, generateColor, MUSCLE_CATEGORIES, getCategoryTabColor } from './utils';
 

@@ -7,6 +7,7 @@ import { onSnapshot, collection, setDoc, doc, query, orderBy, deleteDoc } from '
 import { db, appId } from './firebase';
 import { MASTER_USER, formatDateFromTimestamp } from './utils';
 import { renderUsernameWithBadge, TimerDisplay } from './CommonUI';
+import { copyTextToClipboard } from './nativeBridge';
 import { DataView } from './DataView';
 
 // --- フレンド画面 ---

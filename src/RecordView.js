@@ -2,6 +2,7 @@
 // RecordView.js — トレーニング記録入力画面・プログラム生成＆管理コンポーネント
 // ==========================================
 import React, { useState, useMemo, useEffect } from 'react';
+import { triggerHaptic } from './nativeBridge';
 import { Target, X, AlignLeft, Trash2, CheckCircle, ArrowUp, ArrowDown, Zap, Plus, Activity, Scale, MapPin, Dumbbell, Play, Flame, UserPlus, ListPlus, Clock, Search, Calendar as CalendarIcon } from 'lucide-react';
 import { setDoc, doc, deleteField } from 'firebase/firestore';
 import { db, appId } from './firebase';

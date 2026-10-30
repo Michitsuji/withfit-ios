@@ -7,7 +7,7 @@ import { setDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';
 import { formatDateFromTimestamp, calculateWorkoutTotals } from './utils';
 import { UserAvatar } from './CommonUI';
-import { getApiUrl, triggerHaptic } from './nativeBridge';
+import { getApiUrl } from './nativeBridge';
 
 // --- シークレットゲームコンポーネント ---
 const CAT_DESIGNS = {
