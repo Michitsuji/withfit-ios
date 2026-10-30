@@ -7,7 +7,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     static weak var shared: MainViewController?
 
     private var webView: WKWebView!
-    private var refreshControl: UIRefreshControl!
     private var popupWebView: WKWebView?
     private var popupNavController: UINavigationController?
     private let statusBarBackgroundView = UIView()
@@ -43,7 +42,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         super.viewDidAppear(animated)
         if !hasRequestedInitialNotifAuth {
             hasRequestedInitialNotifAuth = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.requestNativeNotificationPermissionIfNeeded()
             }
         }
@@ -79,8 +78,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         self.tabVCs = controllers
         self.viewControllers = controllers
         self.selectedIndex = 0
-        self.tabBar.isHidden = true
-        self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0) // Indigo-600
+        let hasSavedDB = Self.loadNativeLocalDBJSON() != "{}"
+        self.tabBar.isHidden = !hasSavedDB
+        self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0)
     }
 
     private func setupWebView() {
@@ -125,22 +125,14 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
-        // iOS純正のバウンススクロール＆下に引っ張って更新（UIRefreshControl）を有効化
-        webView.scrollView.bounces = true
-        webView.scrollView.alwaysBounceVertical = true
+        webView.scrollView.bounces = false
+        webView.scrollView.alwaysBounceVertical = false
         webView.scrollView.alwaysBounceHorizontal = false
         webView.scrollView.showsHorizontalScrollIndicator = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
-
-        // iOS純正 Pull-to-Refresh (Xと同じ引っ張って更新)
-        let rc = UIRefreshControl()
-        rc.tintColor = UIColor(red: 16/255, green: 185/255, blue: 129/255, alpha: 1.0)
-        rc.addTarget(self, action: #selector(handleNativePullToRefresh), for: .valueChanged)
-        webView.scrollView.refreshControl = rc
-        self.refreshControl = rc
 
         let settingsGesture = UITapGestureRecognizer(target: self, action: #selector(showNativeDeveloperMenu))
         settingsGesture.numberOfTouchesRequired = 3
@@ -174,19 +166,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         self.webViewConstraints = constraints
     }
 
-    @objc private func handleNativePullToRefresh() {
-        NativeAudioAndTimerManager.shared.triggerHaptic(style: "medium")
-        sendToWeb(payload: [
-            "type": "NATIVE_PULL_REFRESH"
-        ])
-        // 万一オフライン等で応答が遅れた場合でも最大3秒でスピナーを閉じる安全タイマー
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            if self?.refreshControl.isRefreshing == true {
-                self?.refreshControl.endRefreshing()
-            }
-        }
-    }
-
     // MARK: - UITabBarControllerDelegate (Native iOS 26 Liquid Glass Tab Selection)
     func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
         isReselectingTab = (viewController === selectedViewController)
@@ -198,7 +177,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         let idx = viewController.tabBarItem.tag
         guard idx >= 0 && idx < tabKeys.count else { return }
         let tabKey = tabKeys[idx]
-        webView.scrollView.refreshControl = (tabKey == "timeline") ? refreshControl : nil
         sendToWeb(payload: [
             "type": "NATIVE_TAB_SELECT",
             "tab": tabKey,
@@ -209,7 +187,8 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     private func loadWithFitApp() {
         LocalBundleServer.shared.start()
         let url = LocalBundleServer.shared.baseURL
-        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        // バイトコードキャッシュを有効化して0秒で高速起動
+        let request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
         webView.load(request)
     }
 
@@ -266,18 +245,10 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             let isLoggedIn = payload["isLoggedIn"] as? Bool ?? true
             DispatchQueue.main.async {
                 self.tabBar.isHidden = !isLoggedIn
-                self.webView.scrollView.refreshControl = (isLoggedIn && tab == "timeline") ? self.refreshControl : nil
                 if let idx = self.tabKeys.firstIndex(of: tab), idx != self.selectedIndex {
                     let targetVC = self.tabVCs[idx]
                     self.attachWebView(to: targetVC)
                     self.selectedIndex = idx
-                }
-            }
-
-        case "END_NATIVE_PULL_REFRESH":
-            DispatchQueue.main.async {
-                if self.refreshControl.isRefreshing {
-                    self.refreshControl.endRefreshing()
                 }
             }
 
@@ -426,6 +397,10 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 "type": "PUSH_PERMISSION_STATUS",
                 "status": status
             ])
+            if status == "granted" {
+                let fallbackToken = UserDefaults.standard.string(forKey: "withfit_apns_device_token") ?? "ios_native_local_notification_enabled"
+                self?.sendPushTokenToWeb(token: fallbackToken)
+            }
         }
     }
 

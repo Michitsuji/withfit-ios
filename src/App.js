@@ -38,15 +38,62 @@ import {
 const VAPID_PUBLIC_KEY = 'BAty8GYk1zuoZVh-ZaSdcJsq_o-7vXJLXPNVNzlgsq9rd3wP-jQtclYEdu1MnnLN_0BnlmiKuoWH3X2YvOFl7aM';
 const DEVICE_TOKEN_STORAGE_KEY = 'withfit_device_fcm_token';
 
+function getInitialBootState() {
+  let userId = null;
+  if (typeof window !== 'undefined') {
+    try {
+      const sessionStr = localStorage.getItem('withfit_login_session');
+      if (sessionStr) {
+        const session = JSON.parse(sessionStr);
+        if (session.userId && session.lastActive && Date.now() - session.lastActive <= 30 * 24 * 60 * 60 * 1000) {
+          userId = session.userId;
+        }
+      }
+    } catch (e) {}
+  }
+
+  const cached = userId ? loadLocalDB(userId) : null;
+  const hasCached = Boolean(cached && typeof cached === 'object');
+
+  let draftItems = [];
+  let draftCats = [];
+  if (userId && typeof window !== 'undefined') {
+    try {
+      const sd = localStorage.getItem(`withfit_draft_${userId}`);
+      const sc = localStorage.getItem(`withfit_cats_${userId}`);
+      if (sd) draftItems = JSON.parse(sd);
+      if (sc) draftCats = JSON.parse(sc);
+    } catch (e) {}
+  }
+
+  return {
+    userId,
+    hasCached,
+    accountsInfo: (hasCached && cached.accountsInfo) ? cached.accountsInfo : {},
+    gyms: (hasCached && Array.isArray(cached.gyms)) ? cached.gyms : [],
+    exercises: (hasCached && Array.isArray(cached.exercises)) ? cached.exercises : [],
+    posts: (hasCached && Array.isArray(cached.posts)) ? cached.posts : [],
+    notifications: (hasCached && Array.isArray(cached.notifications)) ? cached.notifications : [],
+    draftItems,
+    draftCats
+  };
+}
+
 export default function App() {
   useAutoScrollDisable();
 
+  const initialBootRef = useRef(null);
+  if (!initialBootRef.current) {
+    initialBootRef.current = getInitialBootState();
+  }
+  const boot = initialBootRef.current;
+
   const [firebaseUser, setFirebaseUser] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(boot.userId);
   const pendingPushToken = useRef(null);
   const hasRefreshedTokenForUser = useRef(null);
   const mountTimeRef = useRef(Date.now());
-  const shownToastIdsRef = useRef(new Set());
+  const shownToastIdsRef = useRef(new Set((boot.notifications || []).map(n => n.id)));
   const toastTimerRef = useRef(null);
 
   const [deviceFcmToken, setDeviceFcmToken] = useState(() => {
@@ -249,22 +296,7 @@ export default function App() {
 
   const [currentTab, setCurrentTab] = useState('timeline');
   const [isRecordManual, setIsRecordManual] = useState(false);
-  const [isSessionChecked, setIsSessionChecked] = useState(false);
-
-  useEffect(() => {
-    const sessionStr = localStorage.getItem('withfit_login_session');
-    if (sessionStr) {
-       try {
-          const session = JSON.parse(sessionStr);
-          if (session.userId && session.lastActive && Date.now() - session.lastActive <= 7 * 24 * 60 * 60 * 1000) {
-             setCurrentUser(session.userId);
-          } else {
-             localStorage.removeItem('withfit_login_session');
-          }
-       } catch(e) {}
-    }
-    setIsSessionChecked(true);
-  }, []);
+  const [isSessionChecked] = useState(true);
   
   const scrollPositions = useRef({});
   const prevTabRef = useRef('timeline');
@@ -281,17 +313,21 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [currentTab]);
   
-  const [posts, setPosts] = useState([]);
-  const [accountsInfo, setAccountsInfo] = useState({});
-  const [gyms, setGyms] = useState([]); 
-  const [exercises, setExercises] = useState([]); 
+  const [posts, setPosts] = useState(boot.posts);
+  const [accountsInfo, setAccountsInfo] = useState(boot.accountsInfo);
+  const [gyms, setGyms] = useState(boot.gyms); 
+  const [exercises, setExercises] = useState(boot.exercises); 
 
-  const [dataLoaded, setDataLoaded] = useState({ accounts: false, gyms: false, exercises: false, workouts: false });
-  const [loadTimeout, setLoadTimeout] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(
+    boot.hasCached
+      ? { accounts: true, gyms: true, exercises: true, workouts: true }
+      : { accounts: false, gyms: false, exercises: false, workouts: false }
+  );
+  const [loadTimeout, setLoadTimeout] = useState(boot.hasCached);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const [draftWorkoutItems, setDraftWorkoutItems] = useState([]);
-  const [isDraftLoaded, setIsDraftLoaded] = useState(false);
-  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [draftWorkoutItems, setDraftWorkoutItems] = useState(boot.draftItems);
+  const [isDraftLoaded, setIsDraftLoaded] = useState(true);
+  const [selectedCategories, setSelectedCategories] = useState(boot.draftCats);
   const [editingPost, setEditingPost] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [selectedFriendUser, setSelectedFriendUser] = useState(null);
@@ -307,11 +343,11 @@ export default function App() {
 
 
   const localCacheRef = useRef({
-    accountsInfo: {},
-    gyms: [],
-    exercises: [],
-    posts: [],
-    notifications: []
+    accountsInfo: boot.accountsInfo,
+    gyms: boot.gyms,
+    exercises: boot.exercises,
+    posts: boot.posts,
+    notifications: boot.notifications
   });
 
   const [restDuration, setRestDuration] = useState(0);
@@ -860,37 +896,33 @@ export default function App() {
   }, [currentUser, dataLoaded.accounts, accountsInfo, registerSwAndFetchToken, saveTokenToUserAccount]);
 
   useEffect(() => {
-    if (currentUser && db) {
-      const loadDraft = async () => {
-        try {
-          const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser);
-          const docSnap = await getDoc(docRef);
-          const savedDraft = localStorage.getItem(`withfit_draft_${currentUser}`);
-          const savedCats = localStorage.getItem(`withfit_cats_${currentUser}`);
-          const lsTimestamp = Number(localStorage.getItem(`withfit_draft_time_${currentUser}`)) || 0;
-          const fsTimestamp = docSnap.exists() ? (docSnap.data().draftUpdatedAt || 0) : 0;
-
-          if (savedDraft && (lsTimestamp >= fsTimestamp || !fsTimestamp)) {
-             setDraftWorkoutItems(JSON.parse(savedDraft));
-             if (savedCats) setSelectedCategories(JSON.parse(savedCats));
-          } else if (docSnap.exists() && docSnap.data().currentWorkoutItems) {
-             setDraftWorkoutItems(docSnap.data().currentWorkoutItems);
-             setSelectedCategories(docSnap.data().currentSelectedCategories || []);
-          } else if (savedDraft) {
-             setDraftWorkoutItems(JSON.parse(savedDraft));
-             if (savedCats) setSelectedCategories(JSON.parse(savedCats));
-          }
-        } catch (e) {
-          console.error("Failed to load draft", e);
-        } finally {
-          setIsDraftLoaded(true);
-        }
-      };
-      loadDraft();
-    } else {
-      setIsDraftLoaded(false);
+    if (!currentUser) {
+      setIsDraftLoaded(true);
+      return;
     }
-  }, [currentUser, db]);
+    // まずローカルの下書きを同期的に即座に反映（0ms、通信待ちなし）
+    try {
+      const savedDraft = localStorage.getItem(`withfit_draft_${currentUser}`);
+      const savedCats = localStorage.getItem(`withfit_cats_${currentUser}`);
+      if (savedDraft) setDraftWorkoutItems(JSON.parse(savedDraft));
+      if (savedCats) setSelectedCategories(JSON.parse(savedCats));
+    } catch (e) {}
+    setIsDraftLoaded(true);
+
+    // バックグラウンドでクラウド下書きとの差分のみ確認
+    if (db) {
+      const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser);
+      getDoc(docRef).then((docSnap) => {
+        if (!docSnap.exists()) return;
+        const lsTimestamp = Number(localStorage.getItem(`withfit_draft_time_${currentUser}`)) || 0;
+        const fsTimestamp = docSnap.data().draftUpdatedAt || 0;
+        if (fsTimestamp > lsTimestamp && docSnap.data().currentWorkoutItems) {
+          setDraftWorkoutItems(docSnap.data().currentWorkoutItems);
+          setSelectedCategories(docSnap.data().currentSelectedCategories || []);
+        }
+      }).catch(() => {});
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     const myAcc = accountsInfo[currentUser];
@@ -943,7 +975,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoadTimeout(true), 3000);
+    const timer = setTimeout(() => setLoadTimeout(true), 600);
     return () => clearTimeout(timer);
   }, []);
 
@@ -1015,83 +1047,80 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // 手動差分チェック＆ローカル同期関数
+  // 高速並列差分チェック＆ローカル同期関数
   const handleManualDiffCheck = useCallback(async () => {
     if (!currentUser || !db) return;
-    triggerHaptic('medium');
-    let totalAdded = 0;
-    let totalModified = 0;
-    let totalRemoved = 0;
-
     try {
+      const myFriends = localCacheRef.current.accountsInfo[currentUser]?.friends || [];
+      const targetAccIds = [...new Set([currentUser, ...myFriends])];
+      const chunks = [];
+      for (let i = 0; i < targetAccIds.length; i += 10) {
+        chunks.push(targetAccIds.slice(i, i + 10));
+      }
+
+      // 全コレクションの取得を並列実行して待ち時間を最小化
+      const [gymsSnap, exSnap, accSnaps, workoutSnaps] = await Promise.all([
+        getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gyms')),
+        getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'exercises')),
+        Promise.all(targetAccIds.map(uid => getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', uid)))),
+        Promise.all(chunks.map(chunk => getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'workouts'), where('author', 'in', chunk)))))
+      ]);
+
+      let hasAnyDiff = false;
+
       // 1. ジム一覧の差分チェック
-      const gymsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'gyms'));
       const gymsData = [];
       gymsSnap.forEach(d => gymsData.push({ id: d.id, ...d.data() }));
       gymsData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       const gymDiff = diffArrayCollection(localCacheRef.current.gyms, gymsData, 'id');
       if (gymDiff.hasChanges) {
-        totalAdded += gymDiff.added;
-        totalModified += gymDiff.modified;
-        totalRemoved += gymDiff.removed;
+        hasAnyDiff = true;
         setGyms(gymsData);
         localCacheRef.current.gyms = gymsData;
       }
 
       // 2. 種目一覧の差分チェック
-      const exSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'exercises'));
       const exData = [];
       exSnap.forEach(d => exData.push({ id: d.id, ...d.data() }));
       exData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       const exDiff = diffArrayCollection(localCacheRef.current.exercises, exData, 'id');
       if (exDiff.hasChanges) {
-        totalAdded += exDiff.added;
-        totalModified += exDiff.modified;
-        totalRemoved += exDiff.removed;
+        hasAnyDiff = true;
         setExercises(exData);
         localCacheRef.current.exercises = exData;
       }
 
       // 3. アカウント情報の差分チェック
-      const myFriends = localCacheRef.current.accountsInfo[currentUser]?.friends || [];
-      const targetAccIds = [...new Set([currentUser, ...myFriends])];
       const accUpdates = {};
-      await Promise.all(targetAccIds.map(async (uid) => {
-        const snap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', uid));
-        if (snap.exists()) accUpdates[uid] = snap.data();
-      }));
+      accSnaps.forEach((snap, idx) => {
+        if (snap.exists()) accUpdates[targetAccIds[idx]] = snap.data();
+      });
       const accDiff = diffObjectMap(localCacheRef.current.accountsInfo, accUpdates);
       if (accDiff.hasChanges) {
-        totalAdded += accDiff.added;
-        totalModified += accDiff.modified;
+        hasAnyDiff = true;
         setAccountsInfo(accDiff.map);
         localCacheRef.current.accountsInfo = accDiff.map;
       }
 
       // 4. ワークアウト記録の差分チェック
-      const chunks = [];
-      for (let i = 0; i < targetAccIds.length; i += 10) {
-        chunks.push(targetAccIds.slice(i, i + 10));
-      }
       const fetchedPosts = [];
-      for (const chunk of chunks) {
-        const wSnap = await getDocs(query(collection(db, 'artifacts', appId, 'public', 'data', 'workouts'), where('author', 'in', chunk)));
+      workoutSnaps.forEach(wSnap => {
         wSnap.forEach(d => fetchedPosts.push({ id: d.id, ...d.data() }));
-      }
+      });
       fetchedPosts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       const postDiff = diffArrayCollection(localCacheRef.current.posts, fetchedPosts, 'id');
       if (postDiff.hasChanges) {
-        totalAdded += postDiff.added;
-        totalModified += postDiff.modified;
-        totalRemoved += postDiff.removed;
+        hasAnyDiff = true;
         setPosts(fetchedPosts);
         localCacheRef.current.posts = fetchedPosts;
       }
 
-      saveLocalDB(currentUser, localCacheRef.current);
-      triggerHaptic('success');
+      if (hasAnyDiff) {
+        saveLocalDB(currentUser, localCacheRef.current);
+      }
+      triggerHaptic('light');
     } catch (e) {
-      console.warn('Manual diff check warning:', e);
+      console.warn('Diff check warning:', e);
     }
   }, [currentUser]);
 
@@ -1765,12 +1794,14 @@ export default function App() {
     else { const timer = setTimeout(sendForgotNotification, timeUntilNotify); return () => clearTimeout(timer); }
   }, [currentUser, db, myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.lastActive, myInfo?.draftUpdatedAt, myInfo?.hasSentForgotNotification, sendNotification]);
 
-  // リアルタイム通知購読 ＆ 新着通知のトーストバナー/ローカルSW通知発火
-  const [notifications, setNotifications] = useState([]);
+  // リアルタイム通知購読 ＆ 新着通知のトーストバナー・iOSネイティブ通知発火（端末間の時計ズレにも完全対応）
+  const [notifications, setNotifications] = useState(boot.notifications);
   useEffect(() => {
     if (!db || !currentUser) return;
+    let isFirstSnapshot = true;
     const notifsRef = collection(db, 'artifacts', appId, 'public', 'data', 'notifications');
     const q = query(notifsRef, where('targetUser', '==', currentUser));
+
     const unsub = onSnapshot(q, (snapshot) => {
       const data = [];
       snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
@@ -1779,19 +1810,23 @@ export default function App() {
       setNotifications(sliced);
       persistLocalSnapshot({ notifications: sliced });
 
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        snapshot.docs.forEach(d => {
+          shownToastIdsRef.current.add(d.id);
+        });
+        return;
+      }
+
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
           const notif = { id: change.doc.id, ...change.doc.data() };
-          if (
-            notif.timestamp &&
-            notif.timestamp > mountTimeRef.current &&
-            !shownToastIdsRef.current.has(notif.id)
-          ) {
+          if (!shownToastIdsRef.current.has(notif.id) && !notif.read) {
             shownToastIdsRef.current.add(notif.id);
             showInAppToast(notif);
+            triggerHaptic('medium');
 
-            triggerHaptic('light');
-            // iOSネイティブ通知センターへ通知を発火
+            // iOSネイティブ通知センター（ロック画面・バナー・サウンド）へ即座に発火
             if (isNativeIosApp()) {
               showNativeLocalNotification({
                 id: notif.id,
@@ -1808,7 +1843,7 @@ export default function App() {
       });
     });
     return () => unsub();
-  }, [db, currentUser, showInAppToast]);
+  }, [db, currentUser, showInAppToast, persistLocalSnapshot]);
 
   // 単一種目を過去データから現在の記録中メニューに追加するヘルパー
   const formatItemForImport = (item) => {
@@ -2255,14 +2290,6 @@ export default function App() {
   const handleSendSelfTestPush = async () => {
     if (!currentUser) return;
     triggerHaptic('success');
-    if (isNativeIosApp()) {
-      showNativeLocalNotification({
-        id: `test_ios_${Date.now()}`,
-        title: '🔔 WithFit 通知テスト',
-        body: 'iOSネイティブ通知（バナー・サウンド）が正常に稼働しています！🔥',
-        data: { type: 'general' }
-      });
-    }
     const res = await sendNotification(
       currentUser,
       '🔔 WithFit 通知テスト',

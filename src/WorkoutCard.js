@@ -906,13 +906,14 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
   );
 }
 
-// --- タイムライン画面（Xスタイル最上部スワイプ更新 Pull-to-Refresh 搭載） ---
+// --- タイムライン画面（画面追従＆シンプル円形スピナー Pull-to-Refresh） ---
 function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser, onDelete, onEdit, accountsInfo, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, scrollToPostId, setScrollToPostId, onRefresh }) {
   const [displayLimit, setDisplayLimit] = useState(10);
-  const [pullDistance, setPullDistance] = useState(0);
+  const [pullOffset, setPullOffset] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const pullInfoRef = useRef({ active: false, startY: 0, startX: 0, triggeredHaptic: false, dist: 0 });
-  const PULL_THRESHOLD = 56;
+  const pullRef = useRef({ active: false, startY: 0, startX: 0, lockedHorizontal: false, triggeredHaptic: false, currentOffset: 0 });
+  const PULL_THRESHOLD = 52;
 
   useEffect(() => {
     if (scrollToPostId) {
@@ -937,130 +938,162 @@ function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser
   }, [scrollToPostId, posts, displayLimit, setScrollToPostId]);
 
   const handleTouchStart = (e) => {
-    if (isRefreshing || !e.touches || e.touches.length === 0) return;
+    if (isRefreshing || !e.touches || e.touches.length !== 1) return;
     const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
-    if (scrollTop <= 4) {
-      pullInfoRef.current = {
+    if (scrollTop <= 2) {
+      pullRef.current = {
         active: true,
         startY: e.touches[0].clientY,
         startX: e.touches[0].clientX,
+        lockedHorizontal: false,
         triggeredHaptic: false,
-        dist: 0
+        currentOffset: 0
       };
     } else {
-      pullInfoRef.current.active = false;
+      pullRef.current.active = false;
     }
   };
 
   const handleTouchMove = (e) => {
-    if (!pullInfoRef.current.active || isRefreshing || !e.touches || e.touches.length === 0) return;
-    const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
-    if (scrollTop > 6) {
-      pullInfoRef.current.active = false;
-      setPullDistance(0);
+    if (!pullRef.current.active || isRefreshing || !e.touches || e.touches.length !== 1) return;
+    const dy = e.touches[0].clientY - pullRef.current.startY;
+    const dx = Math.abs(e.touches[0].clientX - pullRef.current.startX);
+
+    if (!pullRef.current.lockedHorizontal && dx > 12 && dx > Math.abs(dy)) {
+      pullRef.current.lockedHorizontal = true;
+      pullRef.current.active = false;
+      setIsPulling(false);
+      setPullOffset(0);
       return;
     }
-    const dy = e.touches[0].clientY - pullInfoRef.current.startY;
-    const dx = Math.abs(e.touches[0].clientX - pullInfoRef.current.startX);
-    if (dy > 6 && dy > dx * 1.2) {
-      const damped = Math.min(96, Math.pow(dy - 6, 0.8));
-      pullInfoRef.current.dist = damped;
-      setPullDistance(damped);
-      if (damped >= PULL_THRESHOLD && !pullInfoRef.current.triggeredHaptic) {
-        pullInfoRef.current.triggeredHaptic = true;
+
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+    if (scrollTop > 4 && pullRef.current.currentOffset === 0) {
+      pullRef.current.active = false;
+      return;
+    }
+
+    if (dy > 0) {
+      if (e.cancelable) e.preventDefault();
+      // 指の動きに滑らかに追従するラバーバンド減衰
+      const damped = Math.min(92, dy * 0.48);
+      pullRef.current.currentOffset = damped;
+      if (!isPulling) setIsPulling(true);
+      setPullOffset(damped);
+
+      if (damped >= PULL_THRESHOLD && !pullRef.current.triggeredHaptic) {
+        pullRef.current.triggeredHaptic = true;
         triggerHaptic('medium');
-      } else if (damped < PULL_THRESHOLD && pullInfoRef.current.triggeredHaptic) {
-        pullInfoRef.current.triggeredHaptic = false;
+      } else if (damped < PULL_THRESHOLD && pullRef.current.triggeredHaptic) {
+        pullRef.current.triggeredHaptic = false;
       }
-    } else if (dy <= 0) {
-      pullInfoRef.current.dist = 0;
-      setPullDistance(0);
+    } else if (pullRef.current.currentOffset > 0) {
+      pullRef.current.currentOffset = 0;
+      setPullOffset(0);
     }
   };
 
   const handleTouchEnd = async () => {
-    if (!pullInfoRef.current.active) return;
-    pullInfoRef.current.active = false;
-    const finalDist = pullInfoRef.current.dist;
-    pullInfoRef.current.dist = 0;
+    if (!pullRef.current.active) return;
+    pullRef.current.active = false;
+    setIsPulling(false);
+    const finalOffset = pullRef.current.currentOffset;
+    pullRef.current.currentOffset = 0;
 
-    if (finalDist >= PULL_THRESHOLD && onRefresh && !isRefreshing) {
+    if (finalOffset >= PULL_THRESHOLD && onRefresh && !isRefreshing) {
       setIsRefreshing(true);
-      setPullDistance(48);
+      setPullOffset(44);
       try {
         await onRefresh();
       } finally {
         setTimeout(() => {
           setIsRefreshing(false);
-          setPullDistance(0);
-        }, 350);
+          setPullOffset(0);
+        }, 180);
       }
     } else {
-      setPullDistance(0);
+      setPullOffset(0);
     }
   };
 
   const displayedPosts = posts.slice(0, displayLimit);
-  const showPullIndicator = isRefreshing || pullDistance > 4;
+  const progress = Math.min(1, pullOffset / PULL_THRESHOLD);
 
   return (
     <div
-      className="space-y-4"
+      className="relative"
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
     >
-      {/* Xスタイル Pull-to-Refresh インジケーター */}
+      {/* シンプルな円形ローディングスピナー（テキストなし・画面追従連動） */}
       <div
-        className="overflow-hidden flex items-center justify-center transition-all duration-200"
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0 right-0 flex justify-center items-center z-10"
         style={{
-          height: showPullIndicator ? `${isRefreshing ? 48 : pullDistance}px` : '0px',
-          opacity: showPullIndicator ? Math.min(1, (isRefreshing ? 48 : pullDistance) / 36) : 0
+          top: '-38px',
+          height: '36px',
+          transform: `translate3d(0, ${pullOffset}px, 0)`,
+          opacity: isRefreshing ? 1 : Math.min(1, Math.max(0, (pullOffset - 6) / 28)),
+          transition: isPulling ? 'none' : 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease'
         }}
       >
-        <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 shadow-sm text-xs font-bold text-slate-600 dark:text-slate-300">
-          {isRefreshing ? (
-            <>
-              <Activity size={15} className="text-emerald-500 animate-spin" />
-              <span>差分をチェックして更新中...</span>
-            </>
-          ) : (
-            <>
-              <ArrowDown
-                size={15}
-                className="text-emerald-500 transition-transform duration-150"
-                style={{
-                  transform: `rotate(${pullDistance >= PULL_THRESHOLD ? 180 : 0}deg)`
-                }}
-              />
-              <span>{pullDistance >= PULL_THRESHOLD ? '指を離して更新' : '下にスワイプして更新'}</span>
-            </>
-          )}
+        <div
+          className="w-7 h-7 rounded-full flex items-center justify-center"
+          style={{
+            transform: isRefreshing ? 'scale(1)' : `scale(${0.65 + 0.35 * progress}) rotate(${pullOffset * 4.5}deg)`,
+            transition: isPulling ? 'none' : 'transform 0.25s ease'
+          }}
+        >
+          <svg
+            className={`w-6 h-6 text-emerald-500 ${isRefreshing ? 'animate-spin' : ''}`}
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+              stroke="currentColor"
+              strokeWidth="2.6"
+              strokeLinecap="round"
+              strokeDasharray="42 18"
+            />
+          </svg>
         </div>
       </div>
 
-      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">タイムライン</h2>
-      {!posts || posts.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center mt-10 shadow-sm">
-          <Dumbbell className="mx-auto text-slate-300 dark:text-slate-600 w-12 h-12 mb-4" />
-          <p className="text-slate-500 dark:text-slate-400 font-bold">まだ記録がありません。<br/>最初のトレーニングを記録しましょう！</p>
-        </div>
-      ) : (
-        <>
-          {displayedPosts.map((post, index) => (
-            <React.Fragment key={post.id}>
-              <WorkoutCard post={post} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={onEdit} onDelete={onDelete} onToggleLike={onToggleLike} onImport={onImport} onImportItem={onImportItem} onAddComment={onAddComment} onDeleteComment={onDeleteComment} onToggleCommentLike={onToggleCommentLike} onUserClick={onUserClick} />
-              {(index + 1) % 5 === 0 && <AdBanner />}
-            </React.Fragment>
-          ))}
-          {posts.length > displayLimit && (
-            <button onClick={() => setDisplayLimit(prev => prev + 10)} className="w-full py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors mt-4">
-              もっと見る
-            </button>
-          )}
-        </>
-      )}
+      {/* タイムライン本体：引っ張り量に合わせて画面全体が滑らかに追従 */}
+      <div
+        className="space-y-4"
+        style={{
+          transform: pullOffset > 0 ? `translate3d(0, ${pullOffset}px, 0)` : 'none',
+          transition: isPulling ? 'none' : 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)'
+        }}
+      >
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">タイムライン</h2>
+        {!posts || posts.length === 0 ? (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center mt-10 shadow-sm">
+            <Dumbbell className="mx-auto text-slate-300 dark:text-slate-600 w-12 h-12 mb-4" />
+            <p className="text-slate-500 dark:text-slate-400 font-bold">まだ記録がありません。<br/>最初のトレーニングを記録しましょう！</p>
+          </div>
+        ) : (
+          <>
+            {displayedPosts.map((post, index) => (
+              <React.Fragment key={post.id}>
+                <WorkoutCard post={post} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={onEdit} onDelete={onDelete} onToggleLike={onToggleLike} onImport={onImport} onImportItem={onImportItem} onAddComment={onAddComment} onDeleteComment={onDeleteComment} onToggleCommentLike={onToggleCommentLike} onUserClick={onUserClick} />
+                {(index + 1) % 5 === 0 && <AdBanner />}
+              </React.Fragment>
+            ))}
+            {posts.length > displayLimit && (
+              <button onClick={() => setDisplayLimit(prev => prev + 10)} className="w-full py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors mt-4">
+                もっと見る
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

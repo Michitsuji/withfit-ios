@@ -6,7 +6,7 @@ import { Plus, Users, UserPlus, Search, X, Edit2, Trash2, MapPin, EyeOff, Eye, T
 import { setDoc, doc, deleteDoc } from 'firebase/firestore';
 import { db, appId } from './firebase';
 import { MASTER_USER, calculateWorkoutTotals, MUSCLE_CATEGORIES, getCategoryColor, getCategoryTabColor } from './utils';
-import { UserAvatar, renderUsernameWithBadge } from './CommonUI';
+import { UserAvatar, renderUsernameWithBadge, LiquidGlassSegmented } from './CommonUI';
 import { ExerciseChartModal } from './DataView';
 
 // ひらがな・カタカナ・大文字小文字を正規化して検索しやすくするヘルパー
@@ -594,14 +594,24 @@ function ExercisesView({ gyms, exercises, posts, accountsInfo, currentUser, myIn
         <h2 className="text-xl font-bold text-slate-900 dark:text-white">種目とジムの管理</h2>
       </div>
       
-      <div className="flex bg-slate-200 dark:bg-slate-800 p-1 rounded-xl">
-        <button onClick={() => setActiveTab('exercises')} className={`flex-1 py-2 text-xs font-bold text-center rounded-lg transition-colors ${activeTab === 'exercises' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
-          種目リスト ({accessibleExercises.length})
-        </button>
-        <button onClick={() => setActiveTab('gyms')} className={`flex-1 py-2 text-xs font-bold text-center rounded-lg transition-colors ${activeTab === 'gyms' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
-          ジムグループ ({joinedGymsList.length})
-        </button>
-      </div>
+      <LiquidGlassSegmented
+        value={activeTab}
+        onChange={setActiveTab}
+        options={[
+          {
+            value: 'exercises',
+            label: `種目リスト (${accessibleExercises.length})`,
+            icon: <Dumbbell size={15} />,
+            activeColorClass: 'text-emerald-600 dark:text-emerald-400'
+          },
+          {
+            value: 'gyms',
+            label: `ジムグループ (${joinedGymsList.length})`,
+            icon: <MapPin size={15} />,
+            activeColorClass: 'text-indigo-600 dark:text-indigo-400'
+          }
+        ]}
+      />
 
       {activeTab === 'gyms' && (
         <div className="space-y-6 animate-in fade-in">

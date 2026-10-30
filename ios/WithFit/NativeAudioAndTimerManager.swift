@@ -31,6 +31,7 @@ final class NativeAudioAndTimerManager {
         } catch {
             print("[WithFit Audio] AudioSession error: \(error.localizedDescription)")
         }
+        startSilentKeepAliveIfNeeded()
     }
 
     // MARK: - Notification Permission Helper
@@ -92,24 +93,14 @@ final class NativeAudioAndTimerManager {
         }
     }
 
-    // MARK: - Background Keep-Alive (トレーニング中・休憩タイマー中のバックグラウンド維持)
+    // MARK: - Background Keep-Alive (バックグラウンド・画面ロック中のリアルタイム通知＆タイマー維持)
     func setTrainingState(isTraining: Bool) {
         isTrainingActive = isTraining
-        updateKeepAliveState()
+        startSilentKeepAliveIfNeeded()
     }
 
-    private func updateKeepAliveState() {
-        let shouldKeepAlive = isTrainingActive || isRestTimerActive
-        if shouldKeepAlive {
-            startSilentKeepAliveIfNeeded()
-        } else {
-            stopSilentKeepAlive()
-        }
-    }
-
-    private func startSilentKeepAliveIfNeeded() {
+    func startSilentKeepAliveIfNeeded() {
         if let player = keepAlivePlayer, player.isPlaying { return }
-        configureAudioSession(duckOthers: false)
         guard let wavData = Self.makeSilentWavData(durationSeconds: 1) else { return }
         do {
             let player = try AVAudioPlayer(data: wavData)
@@ -121,11 +112,6 @@ final class NativeAudioAndTimerManager {
         } catch {
             print("[WithFit Audio] Silent keep-alive error: \(error.localizedDescription)")
         }
-    }
-
-    private func stopSilentKeepAlive() {
-        keepAlivePlayer?.stop()
-        keepAlivePlayer = nil
     }
 
     /// 1秒間の無音PCM WAVデータをメモリ上で生成
@@ -209,7 +195,7 @@ final class NativeAudioAndTimerManager {
         cancelRestTimer()
         guard seconds > 0 else { return }
         isRestTimerActive = true
-        updateKeepAliveState()
+        startSilentKeepAliveIfNeeded()
 
         ensureNotificationPermission { _ in
             let content = UNMutableNotificationContent()
@@ -218,10 +204,10 @@ final class NativeAudioAndTimerManager {
             content.sound = .default
             content.userInfo = ["type": "joint"]
             if #available(iOS 15.0, *) {
-                content.interruptionLevel = .timeSensitive
+                content.interruptionLevel = .active
             }
 
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(seconds), repeats: false)
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(1, seconds)), repeats: false)
             let request = UNNotificationRequest(identifier: self.restTimerNotifId, content: content, trigger: trigger)
             UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
         }
@@ -232,7 +218,6 @@ final class NativeAudioAndTimerManager {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [restTimerNotifId])
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [restTimerNotifId])
         stopAlarmSoundAndVibration()
-        updateKeepAliveState()
     }
 
     // MARK: - 30-Minute Workout Forgot Reminder
@@ -246,7 +231,7 @@ final class NativeAudioAndTimerManager {
             content.sound = .default
             content.userInfo = ["type": "joint"]
             if #available(iOS 15.0, *) {
-                content.interruptionLevel = .timeSensitive
+                content.interruptionLevel = .active
             }
 
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(safeSeconds), repeats: false)
@@ -259,7 +244,7 @@ final class NativeAudioAndTimerManager {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [forgotTimerNotifId])
     }
 
-    // MARK: - Immediate Local Banner Notification
+    // MARK: - Immediate Local Banner Notification (trigger: nil で即時0秒発火・AltStore無料Apple ID完全対応)
     func showLocalNotification(id: String, title: String, body: String, type: String, postId: String) {
         ensureNotificationPermission { _ in
             let content = UNMutableNotificationContent()
@@ -271,11 +256,15 @@ final class NativeAudioAndTimerManager {
                 "postId": postId
             ]
             if #available(iOS 15.0, *) {
-                content.interruptionLevel = .timeSensitive
+                content.interruptionLevel = .active
             }
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.25, repeats: false)
-            let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+            // trigger: nil により iOS 純正の即時通知バナーとして確実に配信
+            let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(request) { error in
+                if let error = error {
+                    print("[WithFit Notification] Error: \(error.localizedDescription)")
+                }
+            }
         }
     }
 }
