@@ -1,0 +1,96 @@
+name: Build WithFit iOS Native App (.ipa)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Cloud macOS Xcode Build (.ipa)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Apply changes.json (if present)
+        run: |
+          if [ -f src/changes.json ] && [ -s src/changes.json ]; then
+            node src/apply_changes.js
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add src/
+            git diff --staged --quiet || (git commit -m "Auto-apply src/changes.json [skip ci]" && git push origin HEAD:main)
+          fi
+
+      - name: Install Dependencies & Build Frontend Bundle
+        env:
+          CI: false
+          GENERATE_SOURCEMAP: false
+        run: |
+          npm install --legacy-peer-deps
+          npm run build
+
+      - name: Sync WebBundle into iOS Native Project
+        run: |
+          rm -rf ios/WithFit/WebBundle
+          mkdir -p ios/WithFit/WebBundle
+          cp -R build/* ios/WithFit/WebBundle/
+          cp -f public/alarm.mp3 ios/WithFit/alarm.mp3
+
+      - name: Generate Xcode Project & Build Native iOS App
+        run: |
+          if command -v xcodegen >/dev/null 2>&1; then
+            (cd ios && xcodegen generate)
+          fi
+          xcodebuild \
+            -project ios/WithFit.xcodeproj \
+            -target WithFit \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ios/build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            clean build
+
+      - name: Package WithFit-iOS.ipa
+        run: |
+          rm -rf Payload WithFit-iOS.ipa
+          mkdir -p Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/WithFit.app Payload/
+          zip -r -9 -q WithFit-iOS.ipa Payload
+          ls -lh WithFit-iOS.ipa
+
+      - name: Upload WithFit-iOS.ipa to Actions Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WithFit-iOS-App
+          path: WithFit-iOS.ipa
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish WithFit-iOS.ipa to GitHub Releases (ios-latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view ios-latest >/dev/null 2>&1; then
+            gh release upload ios-latest WithFit-iOS.ipa --clobber
+          else
+            gh release create ios-latest WithFit-iOS.ipa \
+              --title "WithFit iOS Native App (Latest)" \
+              --notes "Windows PC（Sideloadly / AltStore / SideStore）からiPhoneへ直接インストール可能な最新のiOSネイティブアプリ（WithFit-iOS.ipa）です。"
+          fi

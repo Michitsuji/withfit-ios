@@ -1,0 +1,31 @@
+name: WithFit
+options:
+  bundleIdPrefix: com.michitsuji
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  WithFit:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: WithFit
+        excludes:
+          - "WebBundle/**"
+      - path: WithFit/WebBundle
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.michitsuji.withfit
+        INFOPLIST_FILE: WithFit/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_BITCODE: NO

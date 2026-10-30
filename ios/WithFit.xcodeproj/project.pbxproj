@@ -1,0 +1,246 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000010000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000001 /* AppDelegate.swift */; };
+		A10000020000000000000001 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000020000000000000001 /* SceneDelegate.swift */; };
+		A10000030000000000000001 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000030000000000000001 /* MainViewController.swift */; };
+		A10000040000000000000001 /* LocalBundleServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000040000000000000001 /* LocalBundleServer.swift */; };
+		A10000050000000000000001 /* NativeAudioAndTimerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000050000000000000001 /* NativeAudioAndTimerManager.swift */; };
+		A10000060000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000060000000000000001 /* Assets.xcassets */; };
+		A10000070000000000000001 /* WebBundle in Resources */ = {isa = PBXBuildFile; fileRef = A20000070000000000000001 /* WebBundle */; };
+		A10000080000000000000001 /* alarm.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A20000080000000000000001 /* alarm.mp3 */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* WithFit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WithFit.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000010000000000000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A20000020000000000000001 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		A20000030000000000000001 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
+		A20000040000000000000001 /* LocalBundleServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBundleServer.swift; sourceTree = "<group>"; };
+		A20000050000000000000001 /* NativeAudioAndTimerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAudioAndTimerManager.swift; sourceTree = "<group>"; };
+		A20000060000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000070000000000000001 /* WebBundle */ = {isa = PBXFileReference; lastKnownFileType = folder; path = WebBundle; sourceTree = "<group>"; };
+		A20000080000000000000001 /* alarm.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = alarm.mp3; sourceTree = "<group>"; };
+		A20000090000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A40000020000000000000001 /* WithFit */,
+				A40000030000000000000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A40000020000000000000001 /* WithFit */ = {
+			isa = PBXGroup;
+			children = (
+				A20000010000000000000001 /* AppDelegate.swift */,
+				A20000020000000000000001 /* SceneDelegate.swift */,
+				A20000030000000000000001 /* MainViewController.swift */,
+				A20000040000000000000001 /* LocalBundleServer.swift */,
+				A20000050000000000000001 /* NativeAudioAndTimerManager.swift */,
+				A20000060000000000000001 /* Assets.xcassets */,
+				A20000070000000000000001 /* WebBundle */,
+				A20000080000000000000001 /* alarm.mp3 */,
+				A20000090000000000000001 /* Info.plist */,
+			);
+			path = WithFit;
+			sourceTree = "<group>";
+		};
+		A40000030000000000000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* WithFit.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000010000000000000001 /* WithFit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000020000000000000001 /* Build configuration list for PBXNativeTarget "WithFit" */;
+			buildPhases = (
+				A60000010000000000000001 /* Sources */,
+				A30000010000000000000001 /* Frameworks */,
+				A70000010000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WithFit;
+			productName = WithFit;
+			productReference = A20000000000000000000001 /* WithFit.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A90000010000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = A80000010000000000000001 /* Build configuration list for PBXProject "WithFit" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = ja;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				ja,
+				Base,
+			);
+			mainGroup = A40000010000000000000001;
+			productRefGroup = A40000030000000000000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000010000000000000001 /* WithFit */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A70000010000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000060000000000000001 /* Assets.xcassets in Resources */,
+				A10000070000000000000001 /* WebBundle in Resources */,
+				A10000080000000000000001 /* alarm.mp3 in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A60000010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000010000000000000001 /* AppDelegate.swift in Sources */,
+				A10000020000000000000001 /* SceneDelegate.swift in Sources */,
+				A10000030000000000000001 /* MainViewController.swift in Sources */,
+				A10000040000000000000001 /* LocalBundleServer.swift in Sources */,
+				A10000050000000000000001 /* NativeAudioAndTimerManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA0000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AA0000020000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		AA0000030000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WithFit/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.michitsuji.withfit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AA0000040000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WithFit/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.michitsuji.withfit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000010000000000000001 /* Build configuration list for PBXProject "WithFit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000010000000000000001 /* Debug */,
+				AA0000020000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000020000000000000001 /* Build configuration list for PBXNativeTarget "WithFit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000030000000000000001 /* Debug */,
+				AA0000040000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A90000010000000000000001 /* Project object */;
+}
