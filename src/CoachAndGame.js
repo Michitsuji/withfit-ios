@@ -6,6 +6,7 @@ import { X, Trophy, Award } from 'lucide-react';
 import { setDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';
 import { UserAvatar } from './CommonUI';
+import { setNativeTabBarHidden } from './nativeBridge';
 
 // --- シークレットゲームコンポーネント ---
 const CAT_DESIGNS = {
@@ -158,6 +159,14 @@ const BackgroundCats = () => (
 let sharedAudioCtx = null;
 
 function SecretGame({ onClose, currentUser, accountsInfo = {}, appId }) {
+  // パズル表示中はネイティブの下タブバーを隠す（閉じたら元に戻す）
+  useEffect(() => {
+    setNativeTabBarHidden(true);
+    return () => {
+      setNativeTabBarHidden(false);
+    };
+  }, []);
+
   const playSound = (type) => {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -744,7 +753,7 @@ function SecretGame({ onClose, currentUser, accountsInfo = {}, appId }) {
     }
     return (
       <div className="w-full h-full flex flex-col relative bg-[#F4F1E1] text-[#A4997C] pb-6" onPointerDown={handlePointerDown} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
-        <div className="pt-6 pb-2 flex justify-between items-center px-4 relative z-10 h-[80px]">
+        <div className="pt-6 pb-2 flex justify-between items-center pl-4 pr-[72px] relative z-10 h-[80px]">
           <button onClick={() => setScreen('TITLE')} className="w-12 h-12 bg-[#1ABC9C] text-white rounded-xl shadow-[0_4px_0_#129C81] flex items-center justify-center active:translate-y-1 active:shadow-none z-50 transition-all pointer-events-auto" onPointerDown={(e) => e.stopPropagation()}>
             <svg className="w-7 h-7 pr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M15 19l-7-7 7-7"></path></svg>
           </button>
@@ -827,8 +836,13 @@ function SecretGame({ onClose, currentUser, accountsInfo = {}, appId }) {
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
       
-      <button onClick={onClose} className="absolute top-6 right-6 mt-4 bg-slate-800 text-slate-400 hover:text-white p-2 rounded-full z-[110] transition-colors shadow-lg">
-        <X size={24} />
+      <button
+        onClick={onClose}
+        aria-label="閉じる"
+        className="absolute right-4 w-11 h-11 flex items-center justify-center bg-slate-800/90 text-slate-300 hover:text-white rounded-full z-[110] transition-colors shadow-lg ring-1 ring-white/20"
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 10px)' }}
+      >
+        <X size={22} />
       </button>
 
       <div className="w-full max-w-[420px] h-full relative" style={{ fontFamily: "'Yomogi', cursive, sans-serif" }}>

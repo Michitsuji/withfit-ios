@@ -3,7 +3,7 @@
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
-import { GoogleAuthProvider, signInWithCredential, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithCredential, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
 import { db, appId, auth, app } from './firebase';
@@ -32,6 +32,7 @@ import {
   syncNativeTheme,
   showNativeLocalNotification,
   checkNativePushPermission,
+  setNativeTabBarHidden,
   getApiUrl
 } from './nativeBridge';
 
@@ -92,6 +93,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(boot.userId);
   const pendingPushToken = useRef(null);
   const hasRefreshedTokenForUser = useRef(null);
+  // ログアウト直後に残っているFirebase認証セッションで自動再ログインしないためのガード
+  const suppressAutoLoginRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
   const shownToastIdsRef = useRef(new Set((boot.notifications || []).map(n => n.id)));
   const toastTimerRef = useRef(null);
@@ -117,6 +120,14 @@ export default function App() {
   // 端末トークンをユーザーのFirestoreドキュメント（fcmTokens配列 + fcmToken）へ安全に保存するヘルパー
   const saveTokenToUserAccount = useCallback(async (username, token) => {
     if (!username || !token || !db) return;
+    // プレースホルダは実トークンではないためFirestoreには保存しない（配信できないゴミトークンの混入防止）
+    if (token === 'ios_native_local_notification_enabled') {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(DEVICE_TOKEN_STORAGE_KEY, token);
+      }
+      setDeviceFcmToken(token);
+      return;
+    }
     try {
       if (typeof window !== 'undefined') {
         localStorage.setItem(DEVICE_TOKEN_STORAGE_KEY, token);
@@ -129,7 +140,7 @@ export default function App() {
       const existingTokens = Array.isArray(existingData.fcmTokens)
         ? existingData.fcmTokens
         : (existingData.fcmToken ? [existingData.fcmToken] : []);
-      const mergedTokens = [...new Set([...existingTokens.filter(Boolean), token])].slice(-5);
+      const mergedTokens = [...new Set([...existingTokens.filter(t => t && t !== 'ios_native_local_notification_enabled'), token])].slice(-5);
 
       await setDoc(userRef, {
         fcmToken: token,
@@ -668,11 +679,12 @@ export default function App() {
       console.error('Firestore notification write error:', e);
     }
 
-    // 2. 登録されているすべての端末トークン（fcmTokens配列 + fcmToken）へFCMプッシュ通知を送信
+    // 2. 登録されているすべての端末トークン（fcmTokens配列 + fcmToken）へプッシュ通知を送信
+    //    （iOS端末はAPNsトークンとしてサーバー側でAPNs直接配信、他はFCM。プレースホルダは除外）
     const targetTokens = [...new Set([
       ...(Array.isArray(targetUser.fcmTokens) ? targetUser.fcmTokens : []),
       targetUser.fcmToken
-    ].filter(t => typeof t === 'string' && t.trim().length > 0))];
+    ].filter(t => typeof t === 'string' && t.trim().length > 0 && t !== 'ios_native_local_notification_enabled'))];
 
     if (targetTokens.length > 0) {
       try {
@@ -830,6 +842,13 @@ export default function App() {
   // セッション、基本データ、下書きの全ての読み込みが完了するまでローディングとする
   const isFullyLoaded = isSessionChecked && (Object.values(dataLoaded).every(Boolean) || loadTimeout) && (!currentUser || isDraftLoaded);
 
+  // 読み込みが終わるまではネイティブタブバーを隠す（ロゴのみのスプラッシュ表示にするため）
+  useEffect(() => {
+    if (isNativeIosApp()) {
+      setNativeTabBarHidden(!isFullyLoaded);
+    }
+  }, [isFullyLoaded]);
+
   useEffect(() => {
     if (redirectUser && dataLoaded.accounts) {
       handleGoogleLogin(redirectUser);
@@ -838,6 +857,7 @@ export default function App() {
   }, [redirectUser, dataLoaded.accounts]);
 
   useEffect(() => {
+    if (suppressAutoLoginRef.current) return;
     if (firebaseUser && !firebaseUser.isAnonymous && dataLoaded.accounts && !currentUser) {
       handleGoogleLogin(firebaseUser);
     }
@@ -1328,6 +1348,7 @@ export default function App() {
 
   const handleLogin = async (username, pin) => {
     if (!db) return false;
+    suppressAutoLoginRef.current = false;
     let accountData = null;
     try {
       const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
@@ -1356,6 +1377,7 @@ export default function App() {
 
   const handleGoogleLogin = async (googleUser) => {
     if (!db) return false;
+    suppressAutoLoginRef.current = false;
     try {
       const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('googleUid', '==', googleUser.uid), limit(1));
       const snap = await getDocs(q);
@@ -1428,6 +1450,7 @@ export default function App() {
   };
 
   const handleSecretLogin = async (friendCode, birthDate) => {
+    suppressAutoLoginRef.current = false;
     const cleanCode = String(friendCode || '').trim();
     if (!db || !cleanCode || !birthDate) return false;
     try {
@@ -1448,16 +1471,23 @@ export default function App() {
     } catch (e) { return false; }
   };
 
-  const handleLogout = async () => { 
+  const handleLogout = async () => {
     if (!window.confirm("ログアウトしますか？")) return;
+    // 先にガードを立て、Firebase認証も実際にサインアウトする。
+    // これをしないと残った認証セッションから自動で再ログインしてしまう
+    suppressAutoLoginRef.current = true;
     if (currentUser && db) {
       try {
         await removeDeviceTokenFromUserAccount(currentUser);
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { isAppOnline: false, lastActive: Date.now() }, { merge: true });
       } catch (e) {}
     }
+    try {
+      await signOut(auth);
+    } catch (e) {}
+    setFirebaseUser(null);
     localStorage.removeItem('withfit_login_session');
-    setCurrentUser(null); setCurrentTab('timeline'); setEditingPost(null); 
+    setCurrentUser(null); setCurrentTab('timeline'); setEditingPost(null);
   };
 
   const handleStartTraining = async (gymId) => {
@@ -2351,12 +2381,17 @@ export default function App() {
       }
 
       const userIdToDelete = currentUser;
+      suppressAutoLoginRef.current = true;
       setCurrentUser(null);
       localStorage.removeItem('withfit_login_session');
       setCurrentTab('timeline');
       setEditingPost(null);
 
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', userIdToDelete));
+      try {
+        await signOut(auth);
+      } catch (e) {}
+      setFirebaseUser(null);
       alert("アカウントが削除されました。");
     } catch (e) {
       console.error("Account deletion error:", e);
@@ -2365,28 +2400,13 @@ export default function App() {
   };
 
   if (!isFullyLoaded) {
-    let loadingProgress = 0;
-    if (isSessionChecked) loadingProgress += 10;
-    if (dataLoaded.accounts) loadingProgress += 20;
-    if (dataLoaded.gyms) loadingProgress += 20;
-    if (dataLoaded.exercises) loadingProgress += 20;
-    if (dataLoaded.workouts) loadingProgress += 20;
-    if (isDraftLoaded || (!currentUser && isSessionChecked)) loadingProgress += 10;
-    if (loadTimeout) loadingProgress = 100;
-    loadingProgress = Math.min(100, Math.round(loadingProgress));
-
+    // 起動ロード中はロゴのみを表示する（進捗バーや文言、タブバーは出さない）
     return (
-      <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6">
-        <Activity className="text-emerald-500 w-12 h-12 animate-pulse mb-6" />
-        <p className="text-slate-500 dark:text-slate-400 font-bold mb-4">データを読み込み中...</p>
-        <div className="w-64 max-w-full bg-slate-200 dark:bg-slate-800 rounded-full h-3 mb-2 overflow-hidden shadow-inner">
-          <div 
-            className="bg-emerald-500 h-3 rounded-full transition-all duration-300 ease-out shadow-[0_0_8px_rgba(16,185,129,0.5)]" 
-            style={{ width: `${loadingProgress}%` }}
-          ></div>
+      <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+        <div className="flex items-center gap-3 animate-pulse">
+          <WithFitLogo size={56} className="text-indigo-500" />
+          <span className="text-4xl font-black tracking-tight text-slate-800 dark:text-white">With<span className="text-indigo-500">Fit</span></span>
         </div>
-        <p className="text-emerald-600 dark:text-emerald-400 font-bold text-sm mb-4">{loadingProgress}%</p>
-        <p className="text-slate-400 text-xs font-bold text-center">完了するまでしばらくお待ちください</p>
       </div>
     );
   }

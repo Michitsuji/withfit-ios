@@ -140,6 +140,14 @@ export function checkNativePushPermission() {
   });
 }
 
+// ネイティブタブバーの強制表示/非表示（起動ロード中・全画面ゲーム表示中などに使用）
+export function setNativeTabBarHidden(hidden) {
+  return postNativeMessage({
+    type: 'SET_TAB_BAR_HIDDEN',
+    hidden: Boolean(hidden)
+  });
+}
+
 // iOSネイティブクリップボード（UIPasteboard）への確実なコピー
 export async function copyTextToClipboard(text) {
   const str = String(text || '');

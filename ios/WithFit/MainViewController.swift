@@ -17,6 +17,13 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     private var tabVCs: [UIViewController] = []
     private var isReselectingTab = false
     private var webViewConstraints: [NSLayoutConstraint] = []
+    // タブバー表示状態（Web側のログイン状態と、ロード中/全画面表示中の強制非表示を合成する）
+    private var isTabBarLoggedIn = false
+    private var isTabBarForceHidden = false
+
+    private func refreshTabBarVisibility() {
+        self.tabBar.isHidden = isTabBarForceHidden || !isTabBarLoggedIn
+    }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
         return currentStatusBarStyle
@@ -78,8 +85,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         self.tabVCs = controllers
         self.viewControllers = controllers
         self.selectedIndex = 0
-        let hasSavedDB = Self.loadNativeLocalDBJSON() != "{}"
-        self.tabBar.isHidden = !hasSavedDB
+        // 起動直後は必ずタブバーを隠す。Web側の読み込みが完了し、
+        // ログイン状態が SYNC_ACTIVE_TAB で届いてから表示する
+        self.tabBar.isHidden = true
         self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0)
     }
 
@@ -244,12 +252,20 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             let tab = payload["tab"] as? String ?? "timeline"
             let isLoggedIn = payload["isLoggedIn"] as? Bool ?? true
             DispatchQueue.main.async {
-                self.tabBar.isHidden = !isLoggedIn
+                self.isTabBarLoggedIn = isLoggedIn
+                self.refreshTabBarVisibility()
                 if let idx = self.tabKeys.firstIndex(of: tab), idx != self.selectedIndex {
                     let targetVC = self.tabVCs[idx]
                     self.attachWebView(to: targetVC)
                     self.selectedIndex = idx
                 }
+            }
+
+        case "SET_TAB_BAR_HIDDEN":
+            let hidden = payload["hidden"] as? Bool ?? false
+            DispatchQueue.main.async {
+                self.isTabBarForceHidden = hidden
+                self.refreshTabBarVisibility()
             }
 
         case "SHOW_LOCAL_NOTIFICATION":

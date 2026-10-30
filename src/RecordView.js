@@ -1044,50 +1044,7 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
     return (
       <div className="space-y-5 animate-in fade-in duration-300">
         {modeSwitchBar}
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
-          {myInfo?.isTraining ? 'プログラム管理・メニュー' : 'ワークアウト開始・プログラム管理'}
-        </h2>
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col items-center">
-          <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4"><MapPin size={28} className="text-slate-400 dark:text-slate-500" /></div>
-          <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 text-center">
-            {myInfo?.isTraining ? 'トレーニング中のジム' : '本日のトレーニング場所を選択してください'}
-          </label>
-          <div className="w-full relative mb-6">
-            <select value={selectedGymId} onChange={(e) => handleGymChange(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-slate-800 dark:text-slate-100 font-bold appearance-none focus:outline-none focus:border-emerald-500 text-base" style={{ fontSize: '16px' }}>
-              <option value="" disabled>ジムを選択</option>
-              {sortedGyms.map(gym => <option key={gym.id} value={gym.id}>{gym.name}</option>)}
-            </select>
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">▼</div>
-          </div>
-          
-          {myInfo?.isTraining ? (
-            <button onClick={() => setShowDashboard(false)} className="w-full py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all shadow-md bg-indigo-500 hover:bg-indigo-600 shadow-indigo-500/30 mb-3">
-              <Dumbbell fill="currentColor" size={20} /> 記録画面に戻る
-            </button>
-          ) : (
-            <>
-              <button onClick={handleStart} className="w-full py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all shadow-md bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30 mb-3">
-                <Play fill="currentColor" size={20} /> トレーニング開始
-              </button>
-              
-              <div className="grid grid-cols-2 gap-3 w-full">
-                <button onClick={() => { setIsManual(true); setShowDashboard(false); if (workoutItems.length === 0) addExerciseItem(null); }} className="w-full py-3 rounded-xl font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex flex-col items-center justify-center gap-1 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-all">
-                  <CalendarIcon size={18} /> 過去の記録を追加
-                </button>
-                <button onClick={() => { 
-                   const d = new Date();
-                   setManualDate(formatDateFromTimestamp(d.getTime()));
-                   setManualStartTime(`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`);
-                   setIsMetricsOnlyMode(true); 
-                }} className="w-full py-3 rounded-xl font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 flex flex-col items-center justify-center gap-1 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-all">
-                  <Scale size={18} /> 体組成のみ記録
-                </button>
-              </div>
-            </>
-          )}
-
-        </div>
-        
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">プログラム管理</h2>
         {/* プログラム作成機能 */}
         <div className="mt-6 w-full">
           <div className="flex justify-between items-center mb-3">
@@ -1146,13 +1103,28 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
             </div>
           </div>
           {!myInfo?.isTraining && (
-            <button
-              type="button"
-              onClick={handleStart}
-              className="w-full py-3.5 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all shadow-md bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30"
-            >
-              <Play fill="currentColor" size={20} /> トレーニング開始
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleStart}
+                className="w-full py-3.5 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition-all shadow-md bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30"
+              >
+                <Play fill="currentColor" size={20} /> トレーニング開始
+              </button>
+              <div className="grid grid-cols-2 gap-3 w-full">
+                <button type="button" onClick={() => { setIsManual(true); if (workoutItems.length === 0) addExerciseItem(null); }} className="w-full py-3 rounded-xl font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 flex flex-col items-center justify-center gap-1 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-all">
+                  <CalendarIcon size={18} /> 過去の記録を追加
+                </button>
+                <button type="button" onClick={() => {
+                   const d = new Date();
+                   setManualDate(formatDateFromTimestamp(d.getTime()));
+                   setManualStartTime(`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`);
+                   setIsMetricsOnlyMode(true);
+                }} className="w-full py-3 rounded-xl font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 flex flex-col items-center justify-center gap-1 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-all">
+                  <Scale size={18} /> 体組成のみ記録
+                </button>
+              </div>
+            </>
           )}
         </div>
       )}
