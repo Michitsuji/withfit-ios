@@ -127,7 +127,6 @@ struct TrainingLiveActivityWidget: Widget {
                 Image(systemName: "dumbbell.fill")
                     .foregroundColor(.green)
             }
-            .keylineTint(Color.green)
         }
     }
 }

@@ -14,6 +14,7 @@ final class TrainingLiveActivityManager {
 
     private var activity: Activity<TrainingActivityAttributes>?
     private var currentStartTime: Date?
+    private var lastState: TrainingActivityAttributes.ContentState?
 
     private init() {}
 
@@ -50,6 +51,7 @@ final class TrainingLiveActivityManager {
                 )
             }
             currentStartTime = startTime
+            lastState = initialState
         } catch {
             print("[WithFit LiveActivity] Failed to start: \(error.localizedDescription)")
         }
@@ -64,6 +66,7 @@ final class TrainingLiveActivityManager {
             completedSets: completedSets,
             totalSets: totalSets
         )
+        lastState = state
         Task {
             if #available(iOS 16.2, *) {
                 await activity.update(ActivityContent(state: state, staleDate: nil))
@@ -77,11 +80,20 @@ final class TrainingLiveActivityManager {
     func end(dismissNow: Bool = false) {
         guard let activity = activity else {
             currentStartTime = nil
+            lastState = nil
             return
         }
         self.activity = nil
         currentStartTime = nil
-        let finalState = activity.content.state
+        // Activity.content は iOS 16.2+ のAPIなので、16.1 でも使えるよう
+        // 最後に送った状態を自前で保持して使い回す
+        let finalState = lastState ?? TrainingActivityAttributes.ContentState(
+            exerciseName: "",
+            exerciseCount: 0,
+            completedSets: 0,
+            totalSets: 0
+        )
+        lastState = nil
         Task {
             if #available(iOS 16.2, *) {
                 await activity.end(
