@@ -1081,7 +1081,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
               ) : (
                 <>
                   {renderInputRow(set, item.weightType, 'main', false)}
-                  {!isJointPartner && <button onClick={() => toggleSetDone(item.id, set.id, set.done)} className={`w-7 flex-shrink-0 flex justify-center transition-colors ${set.done ? 'text-emerald-500' : 'text-slate-300 dark:text-slate-600 hover:text-emerald-400'}`} title="セット完了"><CheckCircle size={22} /></button>}
+                  {!isJointPartner && <button onClick={() => updateSet(item.id, set.id, 'done', !set.done)} className={`w-7 flex-shrink-0 flex justify-center transition-colors ${set.done ? 'text-emerald-500' : 'text-slate-300 dark:text-slate-600 hover:text-emerald-400'}`} title="セット完了"><CheckCircle size={22} /></button>}
                   {!isJointPartner && <button onClick={() => removeSet(item.id, set.id)} disabled={item.sets.length === 1} className="w-6 flex-shrink-0 text-slate-400 hover:text-rose-500 disabled:opacity-30 flex justify-center"><X size={18} /></button>}
                 </>
               )}
@@ -1408,7 +1408,6 @@ function EditWorkoutModal({ post, gyms, exercises, onClose, onSave, myPastPosts 
   const removeSet = (itemId, setId) => setWorkoutItems(prev => prev.map(item => item.id === itemId ? { ...item, sets: (item.sets || []).filter(set => set.id !== setId) } : item));
   const reorderSet = (itemId, dragIndex, dropIndex) => { setWorkoutItems(prev => prev.map(item => { if (item.id !== itemId) return item; const newSets = [...(item.sets || [])]; const [dragged] = newSets.splice(dragIndex, 1); newSets.splice(dropIndex, 0, dragged); return { ...item, sets: newSets }; })); };
   const updateSetField = (itemId, setId, field, value) => { setWorkoutItems(prev => prev.map(item => { if (item.id !== itemId) return item; return { ...item, sets: (item.sets || []).map(set => set.id === setId ? { ...set, [field]: value } : set) }; })); };
-  const toggleSetDone = (itemId, setId, done) => updateSetField(itemId, setId, 'done', !done);
 
   const addDropSet = (itemId, parentSetId, targetArray = 'dropSets') => { setWorkoutItems(prev => prev.map(item => { if (item.id !== itemId) return item; return { ...item, sets: item.sets.map(set => { if (set.id !== parentSetId) return set; return { ...set, [targetArray]: [...(set[targetArray] || []), { id: generateId(), weight: '', reps: '', lReps: '', rReps: '' }]}; })}; })); }
   const removeDropSet = (itemId, parentSetId, dropId, targetArray = 'dropSets') => { setWorkoutItems(prev => prev.map(item => { if (item.id !== itemId) return item; return { ...item, sets: item.sets.map(set => { if (set.id !== parentSetId) return set; return { ...set, [targetArray]: (set[targetArray] || []).filter(ds => ds.id !== dropId) }; })}; })); }
