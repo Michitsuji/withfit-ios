@@ -329,12 +329,7 @@ export default function App() {
   const [gyms, setGyms] = useState(boot.gyms); 
   const [exercises, setExercises] = useState(boot.exercises); 
 
-  const [dataLoaded, setDataLoaded] = useState(
-    boot.hasCached
-      ? { accounts: true, gyms: true, exercises: true, workouts: true }
-      : { accounts: false, gyms: false, exercises: false, workouts: false }
-  );
-  const [loadTimeout, setLoadTimeout] = useState(boot.hasCached);
+  const [dataLoaded, setDataLoaded] = useState({ accounts: false, gyms: false, exercises: false, workouts: false });
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [draftWorkoutItems, setDraftWorkoutItems] = useState(boot.draftItems);
   const [isDraftLoaded, setIsDraftLoaded] = useState(true);
@@ -687,6 +682,7 @@ export default function App() {
     ].filter(t => typeof t === 'string' && t.trim().length > 0 && t !== 'ios_native_local_notification_enabled'))];
 
     if (targetTokens.length > 0) {
+      // Vercel の /api/sendPush 経由で配信する（サーバー側で APNs / FCM に振り分け）
       try {
         const res = await fetch(getApiUrl('/api/sendPush'), {
           method: 'POST',
@@ -840,7 +836,7 @@ export default function App() {
   };
 
   // セッション、基本データ、下書きの全ての読み込みが完了するまでローディングとする
-  const isFullyLoaded = isSessionChecked && (Object.values(dataLoaded).every(Boolean) || loadTimeout) && (!currentUser || isDraftLoaded);
+  const isFullyLoaded = isSessionChecked && Object.values(dataLoaded).every(Boolean) && (!currentUser || isDraftLoaded);
 
   // 読み込みが終わるまではネイティブタブバーを隠す（ロゴのみのスプラッシュ表示にするため）
   useEffect(() => {
@@ -992,11 +988,6 @@ export default function App() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline); };
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setLoadTimeout(true), 600);
-    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -1960,21 +1951,8 @@ export default function App() {
       return nextItems;
     });
 
-    if (myInfo?.isTraining || isRecordManual) {
-      alert(`「${item.exerciseName}」を現在の記録に追加しました！`);
-    } else {
-      const matchedGym = post?.gymName ? allGyms.find(g => g.name === post.gymName) : null;
-      const fallbackGymId = matchedGym?.id || (myInfo.joinedGyms || []).find(id => id !== 'common') || '';
-      if (fallbackGymId && window.confirm(`「${item.exerciseName}」をメニューに追加しました。\nこのままトレーニングを開始して記録画面を開きますか？`)) {
-        await handleStartTraining(fallbackGymId);
-        setCurrentTab('record');
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('returnToRecordInput'));
-        }, 50);
-      } else {
-        alert(`「${item.exerciseName}」を記録メニューに追加しました！`);
-      }
-    }
+    // 「現在の記録に追加」ではトレーニングは開始せず、追加のみ行う
+    alert(`「${item.exerciseName}」を現在の記録に追加しました！`);
   };
 
   const handleImportWorkout = async (post, isManual = false) => {
