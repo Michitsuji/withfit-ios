@@ -30,7 +30,6 @@ export function postNativeMessage(payload) {
 }
 
 // iOS Taptic Engine 触覚フィードバック
-// style: 'light' | 'medium' | 'heavy' | 'selection' | 'success' | 'warning' | 'error' | 'vibrate'
 export function triggerHaptic(style = 'light') {
   if (postNativeMessage({ type: 'HAPTIC', style })) {
     return;
@@ -60,6 +59,20 @@ export function cancelNativeRestTimer() {
   });
 }
 
+// iOSネイティブAVAudioPlayerによるアラーム音＆連続バイブ鳴動（WebKitの自動再生制限を回避）
+export function playNativeAlarm(volume = 1.0) {
+  postNativeMessage({
+    type: 'PLAY_ALARM',
+    volume: Number(volume)
+  });
+}
+
+export function stopNativeAlarm() {
+  postNativeMessage({
+    type: 'STOP_ALARM'
+  });
+}
+
 // 30分操作なし時の記録忘れ防止リマインダーをiOSネイティブ側にスケジュール
 export function scheduleNativeForgotTimer(seconds = 1800) {
   if (!seconds || seconds <= 0) return;
@@ -72,6 +85,22 @@ export function scheduleNativeForgotTimer(seconds = 1800) {
 export function cancelNativeForgotTimer() {
   postNativeMessage({
     type: 'CANCEL_FORGOT_TIMER'
+  });
+}
+
+// トレーニング開始3分後のフレンド通知がロック画面中でも発火するようネイティブタイマーも補助予約
+export function scheduleNativeStartTimer(seconds = 180, gymName = 'ジム') {
+  if (!seconds || seconds <= 0) return;
+  postNativeMessage({
+    type: 'START_TRAINING_TIMER',
+    seconds: Number(seconds),
+    gymName: gymName || 'ジム'
+  });
+}
+
+export function cancelNativeStartTimer() {
+  postNativeMessage({
+    type: 'CANCEL_TRAINING_TIMER'
   });
 }
 
@@ -104,6 +133,13 @@ export function showNativeLocalNotification({ id, title, body, data }) {
   });
 }
 
+// iOSネイティブ通知権限ステータスの取得リクエスト
+export function checkNativePushPermission() {
+  return postNativeMessage({
+    type: 'CHECK_PUSH_PERMISSION'
+  });
+}
+
 // iOSネイティブクリップボード（UIPasteboard）への確実なコピー
 export async function copyTextToClipboard(text) {
   const str = String(text || '');
@@ -121,7 +157,7 @@ export async function copyTextToClipboard(text) {
   return true;
 }
 
-// APIエンドポイントURL解決（ローカルバンドル実行時やカスタムバックエンド設定時に対応）
+// APIエンドポイントURL解決
 export function getApiUrl(path) {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   if (typeof window !== 'undefined') {

@@ -33,6 +33,24 @@ final class NativeAudioAndTimerManager {
         }
     }
 
+    // MARK: - Notification Permission Helper
+    func ensureNotificationPermission(completion: @escaping (Bool) -> Void) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                completion(true)
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+                    MainViewController.shared?.syncNotificationPermissionStatus()
+                    completion(granted)
+                }
+            default:
+                completion(false)
+            }
+        }
+    }
+
     // MARK: - Haptic Feedback (Taptic Engine)
     func triggerHaptic(style: String) {
         DispatchQueue.main.async {
@@ -110,7 +128,7 @@ final class NativeAudioAndTimerManager {
         keepAlivePlayer = nil
     }
 
-    /// 1秒間の無音PCM WAVデータをメモリ上で生成（外部ファイル依存ゼロ）
+    /// 1秒間の無音PCM WAVデータをメモリ上で生成
     private static func makeSilentWavData(durationSeconds: Int) -> Data? {
         let sampleRate: UInt32 = 8000
         let numChannels: UInt16 = 1
@@ -141,33 +159,39 @@ final class NativeAudioAndTimerManager {
         return data
     }
 
-    // MARK: - Interval Rest Timer (Native Notification + Alarm)
-    func scheduleRestTimer(seconds: Int) {
-        cancelRestTimer()
-        guard seconds > 0 else { return }
-        isRestTimerActive = true
-        updateKeepAliveState()
+    // MARK: - Native Alarm Sound & Continuous Vibration
+    func playNativeAlarm(volume: Float = 1.0) {
+        DispatchQueue.main.async {
+            self.stopAlarmSoundAndVibration()
+            AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            let gen = UINotificationFeedbackGenerator()
+            gen.notificationOccurred(.warning)
 
-        let content = UNMutableNotificationContent()
-        content.title = "⏰ インターバル終了！"
-        content.body = "休憩時間が終了しました。次のセットに入りましょう！🔥"
-        content.sound = .default
-        content.userInfo = ["type": "joint"]
-        if #available(iOS 15.0, *) {
-            content.interruptionLevel = .timeSensitive
+            self.vibrateTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: true) { _ in
+                AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+            }
+
+            guard volume > 0.0 else { return }
+            self.configureAudioSession(duckOthers: true)
+
+            let alarmURL = Bundle.main.url(forResource: "alarm", withExtension: "mp3")
+                ?? Bundle.main.resourceURL?.appendingPathComponent("WebBundle/alarm.mp3")
+
+            if let url = alarmURL, FileManager.default.fileExists(atPath: url.path) {
+                do {
+                    let player = try AVAudioPlayer(contentsOf: url)
+                    player.volume = min(1.0, max(0.0, volume))
+                    player.numberOfLoops = -1
+                    player.prepareToPlay()
+                    player.play()
+                    self.alarmPlayer = player
+                } catch {
+                    AudioServicesPlaySystemSound(1005)
+                }
+            } else {
+                AudioServicesPlaySystemSound(1005)
+            }
         }
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(seconds), repeats: false)
-        let request = UNNotificationRequest(identifier: restTimerNotifId, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
-    }
-
-    func cancelRestTimer() {
-        isRestTimerActive = false
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [restTimerNotifId])
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [restTimerNotifId])
-        stopAlarmSoundAndVibration()
-        updateKeepAliveState()
     }
 
     func stopAlarmSoundAndVibration() {
@@ -180,22 +204,55 @@ final class NativeAudioAndTimerManager {
         }
     }
 
+    // MARK: - Interval Rest Timer (Native Notification + Alarm)
+    func scheduleRestTimer(seconds: Int) {
+        cancelRestTimer()
+        guard seconds > 0 else { return }
+        isRestTimerActive = true
+        updateKeepAliveState()
+
+        ensureNotificationPermission { _ in
+            let content = UNMutableNotificationContent()
+            content.title = "⏰ インターバル終了！"
+            content.body = "休憩時間が終了しました。次のセットに入りましょう！🔥"
+            content.sound = .default
+            content.userInfo = ["type": "joint"]
+            if #available(iOS 15.0, *) {
+                content.interruptionLevel = .timeSensitive
+            }
+
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(seconds), repeats: false)
+            let request = UNNotificationRequest(identifier: self.restTimerNotifId, content: content, trigger: trigger)
+            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+        }
+    }
+
+    func cancelRestTimer() {
+        isRestTimerActive = false
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [restTimerNotifId])
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [restTimerNotifId])
+        stopAlarmSoundAndVibration()
+        updateKeepAliveState()
+    }
+
     // MARK: - 30-Minute Workout Forgot Reminder
     func scheduleForgotTimer(seconds: Int) {
         cancelForgotTimer()
         let safeSeconds = max(60, seconds)
-        let content = UNMutableNotificationContent()
-        content.title = "⏳ 記録忘れはありませんか？"
-        content.body = "最後の操作から30分以上経過しています。終了する場合は記録を保存してください。"
-        content.sound = .default
-        content.userInfo = ["type": "joint"]
-        if #available(iOS 15.0, *) {
-            content.interruptionLevel = .timeSensitive
-        }
+        ensureNotificationPermission { _ in
+            let content = UNMutableNotificationContent()
+            content.title = "⏳ 記録忘れはありませんか？"
+            content.body = "最後の操作から30分以上経過しています。終了する場合は記録を保存してください。"
+            content.sound = .default
+            content.userInfo = ["type": "joint"]
+            if #available(iOS 15.0, *) {
+                content.interruptionLevel = .timeSensitive
+            }
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(safeSeconds), repeats: false)
-        let request = UNNotificationRequest(identifier: forgotTimerNotifId, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(safeSeconds), repeats: false)
+            let request = UNNotificationRequest(identifier: self.forgotTimerNotifId, content: content, trigger: trigger)
+            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+        }
     }
 
     func cancelForgotTimer() {
@@ -204,19 +261,21 @@ final class NativeAudioAndTimerManager {
 
     // MARK: - Immediate Local Banner Notification
     func showLocalNotification(id: String, title: String, body: String, type: String, postId: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        content.userInfo = [
-            "type": type,
-            "postId": postId
-        ]
-        if #available(iOS 15.0, *) {
-            content.interruptionLevel = .timeSensitive
+        ensureNotificationPermission { _ in
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            content.userInfo = [
+                "type": type,
+                "postId": postId
+            ]
+            if #available(iOS 15.0, *) {
+                content.interruptionLevel = .timeSensitive
+            }
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.25, repeats: false)
+            let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
         }
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }

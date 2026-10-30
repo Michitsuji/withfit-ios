@@ -11,6 +11,7 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
     private var popupNavController: UINavigationController?
     private let statusBarBackgroundView = UIView()
     private var currentStatusBarStyle: UIStatusBarStyle = .darkContent
+    private var hasRequestedInitialNotifAuth = false
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
         return currentStatusBarStyle
@@ -21,6 +22,16 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         Self.shared = self
         setupViews()
         loadWithFitApp()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !hasRequestedInitialNotifAuth {
+            hasRequestedInitialNotifAuth = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.requestNativeNotificationPermissionIfNeeded()
+            }
+        }
     }
 
     private func setupViews() {
@@ -40,6 +51,7 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         let savedNativeDBJSON = Self.loadNativeLocalDBJSON()
         let bridgeScriptSource = """
         window.__WITHFIT_NATIVE_DB__ = \(savedNativeDBJSON);
+        window.__WITHFIT_OS_PERMISSION__ = 'default';
         window.WithFitNative = true;
         window.ReactNativeWebView = {
           postMessage: function(msgStr) {
@@ -70,7 +82,6 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         webView.scrollView.showsHorizontalScrollIndicator = false
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsLinkPreview = false
-        // Safari互換User-Agentを設定してFirebase Google OAuthの403 disallowed_useragentを回避
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
         view.addSubview(webView)
@@ -87,7 +98,6 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
 
-        // 3本指ダブルタップでバックエンドAPI設定＆リロードメニューを開くネイティブジェスチャー
         let settingsGesture = UITapGestureRecognizer(target: self, action: #selector(showNativeDeveloperMenu))
         settingsGesture.numberOfTouchesRequired = 3
         settingsGesture.numberOfTapsRequired = 2
@@ -123,6 +133,13 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         case "VIBRATE":
             NativeAudioAndTimerManager.shared.triggerHaptic(style: "vibrate")
 
+        case "PLAY_ALARM":
+            let volume = (payload["volume"] as? NSNumber)?.floatValue ?? 1.0
+            NativeAudioAndTimerManager.shared.playNativeAlarm(volume: volume)
+
+        case "STOP_ALARM":
+            NativeAudioAndTimerManager.shared.stopAlarmSoundAndVibration()
+
         case "START_REST_TIMER":
             let seconds = (payload["seconds"] as? NSNumber)?.intValue ?? 0
             NativeAudioAndTimerManager.shared.scheduleRestTimer(seconds: seconds)
@@ -153,11 +170,15 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         case "REQUEST_PUSH_PERMISSION":
             requestNativeNotificationPermission()
 
+        case "CHECK_PUSH_PERMISSION":
+            syncNotificationPermissionStatus()
+
         case "REQUEST_PUSH_TOKEN":
             syncNotificationPermissionStatus()
             if let savedToken = UserDefaults.standard.string(forKey: "withfit_apns_device_token") {
                 sendPushTokenToWeb(token: savedToken)
             } else {
+                sendPushTokenToWeb(token: "ios_native_local_notification_enabled")
                 DispatchQueue.main.async {
                     UIApplication.shared.registerForRemoteNotifications()
                 }
@@ -215,9 +236,22 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         ])
     }
 
+    private func requestNativeNotificationPermissionIfNeeded() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            if settings.authorizationStatus == .notDetermined {
+                self?.requestNativeNotificationPermission()
+            } else {
+                self?.syncNotificationPermissionStatus()
+            }
+        }
+    }
+
     func requestNativeNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { [weak self] granted, _ in
             let status = granted ? "granted" : "denied"
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__WITHFIT_OS_PERMISSION__ = '\(status)';", completionHandler: nil)
+            }
             self?.sendToWeb(payload: [
                 "type": "PUSH_PERMISSION_STATUS",
                 "status": status
@@ -243,6 +277,9 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
             default:
                 status = "default"
             }
+            DispatchQueue.main.async {
+                self?.webView?.evaluateJavaScript("window.__WITHFIT_OS_PERMISSION__ = '\(status)';", completionHandler: nil)
+            }
             self?.sendToWeb(payload: [
                 "type": "PUSH_PERMISSION_STATUS",
                 "status": status
@@ -254,27 +291,27 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         DispatchQueue.main.async {
             switch theme {
             case "dark", "mono":
-                self.statusBarBackgroundView.backgroundColor = UIColor(red: 30/255, green: 41/255, blue: 59/255, alpha: 1.0) // #1e293b
-                self.view.backgroundColor = UIColor(red: 15/255, green: 23/255, blue: 42/255, alpha: 1.0) // #0f172a
+                self.statusBarBackgroundView.backgroundColor = UIColor(red: 30/255, green: 41/255, blue: 59/255, alpha: 1.0)
+                self.view.backgroundColor = UIColor(red: 15/255, green: 23/255, blue: 42/255, alpha: 1.0)
                 self.currentStatusBarStyle = .lightContent
             case "ocean":
-                self.statusBarBackgroundView.backgroundColor = UIColor(red: 3/255, green: 42/255, blue: 74/255, alpha: 1.0) // #032a4a
-                self.view.backgroundColor = UIColor(red: 2/255, green: 21/255, blue: 38/255, alpha: 1.0) // #021526
+                self.statusBarBackgroundView.backgroundColor = UIColor(red: 3/255, green: 42/255, blue: 74/255, alpha: 1.0)
+                self.view.backgroundColor = UIColor(red: 2/255, green: 21/255, blue: 38/255, alpha: 1.0)
                 self.currentStatusBarStyle = .lightContent
             case "pop":
                 self.statusBarBackgroundView.backgroundColor = .white
-                self.view.backgroundColor = UIColor(red: 254/255, green: 249/255, blue: 195/255, alpha: 1.0) // #fef9c3
+                self.view.backgroundColor = UIColor(red: 254/255, green: 249/255, blue: 195/255, alpha: 1.0)
                 self.currentStatusBarStyle = .darkContent
             default:
                 self.statusBarBackgroundView.backgroundColor = .white
-                self.view.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0) // #f8fafc
+                self.view.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
                 self.currentStatusBarStyle = .darkContent
             }
             self.setNeedsStatusBarAppearanceUpdate()
         }
     }
 
-    // MARK: - WKUIDelegate (Native iOS Alerts, Confirms, Prompts & OAuth Popup Sheet)
+    // MARK: - WKUIDelegate
     func webView(
         _ webView: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,
@@ -327,14 +364,12 @@ final class MainViewController: UIViewController, WKScriptMessageHandler, WKUIDe
         presentTopAlert(alert)
     }
 
-    // Firebase signInWithPopup (Google OAuth) 用のネイティブモーダルシート
     func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        // 外部スポンサーリンク等はSafariで開く
         if let targetURL = navigationAction.request.url,
            let host = targetURL.host?.lowercased(),
            !host.contains("google") && !host.contains("firebase") && !host.contains("localhost") {

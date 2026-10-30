@@ -1,7 +1,7 @@
 // ==========================================
 // CoachAndGame.js — AIコーチ＆台帳モーダル・シークレットゲーム（フレンドランキング対応）コンポーネント
 // ==========================================
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, Trophy, Award } from 'lucide-react';
 import { setDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';

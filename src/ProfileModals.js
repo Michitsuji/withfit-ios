@@ -95,20 +95,16 @@ function ProfileModal({
       setImageObj(null);
       setShowDeleteConfirm(false);
       setDeleteAgreed(false);
-      if (typeof window !== 'undefined') {
-        const checkModalPermission = async () => {
-          let current = pushStatus?.permission || 'default';
-          if ('Notification' in window) current = Notification.permission;
-          if (navigator.permissions && navigator.permissions.query) {
-            try { const status = await navigator.permissions.query({ name: 'notifications' }); if (status && status.state) current = status.state === 'prompt' ? 'default' : status.state; } catch(e) {}
-          }
-          setOsPermission(current);
-        };
-        checkModalPermission();
-      }
+      setOsPermission(pushStatus?.permission || (typeof window !== 'undefined' && window.__WITHFIT_OS_PERMISSION__) || 'default');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  useEffect(() => {
+    if (pushStatus?.permission) {
+      setOsPermission(pushStatus.permission);
+    }
+  }, [pushStatus?.permission]);
 
   if (!isOpen) return null;
 
@@ -190,8 +186,10 @@ function ProfileModal({
     setIsPushBusy(true);
     try {
       await actionFn();
-      if (typeof window !== 'undefined' && 'Notification' in window) {
-        setOsPermission(Notification.permission);
+      if (typeof window !== 'undefined' && window.__WITHFIT_OS_PERMISSION__) {
+        setOsPermission(window.__WITHFIT_OS_PERMISSION__);
+      } else if (pushStatus?.permission) {
+        setOsPermission(pushStatus.permission);
       }
     } finally {
       setIsPushBusy(false);

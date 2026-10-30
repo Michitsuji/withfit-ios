@@ -24,11 +24,14 @@ import {
   triggerHaptic,
   scheduleNativeRestTimer,
   cancelNativeRestTimer,
+  playNativeAlarm,
+  stopNativeAlarm,
   scheduleNativeForgotTimer,
   cancelNativeForgotTimer,
   setNativeTrainingState,
   syncNativeTheme,
   showNativeLocalNotification,
+  checkNativePushPermission,
   getApiUrl
 } from './nativeBridge';
 
@@ -381,8 +384,8 @@ export default function App() {
              setRestTimeLeft(0);
              setIsAlarmRinging(true);
              if (alarmAudio.current) alarmAudio.current.play().catch(e=>console.log(e));
+             playNativeAlarm(timerVolume);
              triggerHaptic('vibrate');
-             postNativeMessage({ type: 'VIBRATE' });
              clearInterval(interval);
           } else {
              setRestTimeLeft(left);
@@ -424,6 +427,7 @@ export default function App() {
     setRestTimerStart(null);
     setRestDuration(0);
     setRestTimeLeft(0);
+    stopNativeAlarm();
     cancelNativeRestTimer();
   };
 
@@ -534,19 +538,24 @@ export default function App() {
   useEffect(() => {
     const checkPermission = async () => {
       if (typeof window === 'undefined') return;
+      if (isNativeIosApp()) {
+        checkNativePushPermission();
+        if (window.__WITHFIT_OS_PERMISSION__) {
+          const natPerm = window.__WITHFIT_OS_PERMISSION__;
+          setOsPermission(prev => prev !== natPerm ? natPerm : prev);
+        }
+        return;
+      }
       let current = 'default';
-      
       if ('Notification' in window) {
         current = Notification.permission;
       }
-      
       if (navigator.permissions && navigator.permissions.query) {
         try {
           const status = await navigator.permissions.query({ name: 'notifications' });
           if (status && status.state) current = status.state === 'prompt' ? 'default' : status.state;
         } catch(e) {}
       }
-      
       setOsPermission(prev => prev !== current ? current : prev);
     };
 
@@ -802,11 +811,22 @@ export default function App() {
     const myData = accountsInfo[currentUser];
     if (!myData) return;
 
-    if (window.ReactNativeWebView && hasRefreshedTokenForUser.current !== currentUser) {
+    if (isNativeIosApp() && hasRefreshedTokenForUser.current !== currentUser) {
       hasRefreshedTokenForUser.current = currentUser;
-      try {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_PUSH_TOKEN' }));
-      } catch (e) {}
+      checkNativePushPermission();
+      postNativeMessage({ type: 'REQUEST_PUSH_TOKEN' });
+      const existingLocalToken = localStorage.getItem(DEVICE_TOKEN_STORAGE_KEY);
+      if (!existingLocalToken) {
+        const hasPromptedThisSession = sessionStorage.getItem('withfit_push_prompted');
+        if (!hasPromptedThisSession && osPermission === 'default') {
+          setPushPromptType('request');
+          setTimeout(() => {
+            setShowPushPrompt(true);
+            sessionStorage.setItem('withfit_push_prompted', 'true');
+          }, 1200);
+        }
+      }
+      return;
     }
 
     if ('Notification' in window) {
@@ -1750,7 +1770,9 @@ export default function App() {
       const data = [];
       snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
       data.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      setNotifications(data.slice(0, 40));
+      const sliced = data.slice(0, 40);
+      setNotifications(sliced);
+      persistLocalSnapshot({ notifications: sliced });
 
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
@@ -2158,19 +2180,31 @@ export default function App() {
     if (!currentUser || !db || !app) return;
     if (isCurrentlyOn) {
       await removeDeviceTokenFromUserAccount(currentUser);
+      triggerHaptic('light');
       alert('この端末のプッシュ通知をオフにしました。');
       return;
     }
 
     if (isNativeIosApp()) {
+      triggerHaptic('medium');
       postNativeMessage({ type: 'REQUEST_PUSH_PERMISSION' });
-      await saveTokenToUserAccount(currentUser, deviceFcmToken || 'ios_native_local_notification_enabled');
+      const activeToken = (deviceFcmToken && deviceFcmToken !== 'null')
+        ? deviceFcmToken
+        : 'ios_native_local_notification_enabled';
+      await saveTokenToUserAccount(currentUser, activeToken);
+      setOsPermission('granted');
       setShowPushPrompt(false);
+      showNativeLocalNotification({
+        id: `enable_${Date.now()}`,
+        title: '🔔 通知がオンになりました',
+        body: 'WithFitのトレーニング通知・タイマー通知をこのiPhoneで受信できます！',
+        data: { type: 'general' }
+      });
       return;
     }
 
     if (typeof window === 'undefined' || !('Notification' in window)) {
-      alert('通知機能の初期化に失敗しました。端末の設定からWithFitの通知を許可してください。');
+      alert('端末の設定からWithFitの通知を許可してください。');
       setShowPushPrompt(false);
       return;
     }
@@ -2183,15 +2217,12 @@ export default function App() {
         if (token) {
           await saveTokenToUserAccount(currentUser, token);
           alert('プッシュ通知をオンにしました！');
-        } else {
-          alert('通知権限は許可されましたが、トークンの取得に失敗しました。通信環境をご確認のうえ再試行してください。');
         }
       } else {
-        alert('通知が許可されませんでした。端末またはブラウザの設定から許可してください。');
+        alert('通知が許可されませんでした。iPhoneの「設定」→「WithFit」→「通知」から許可してください。');
       }
     } catch (error) {
       console.error('Push permission error:', error);
-      alert('通知の設定中にエラーが発生しました。');
     } finally {
       setShowPushPrompt(false);
     }
@@ -2199,9 +2230,12 @@ export default function App() {
 
   const handleRefreshPushToken = async () => {
     if (!currentUser) return;
-    if (typeof window !== 'undefined' && window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_PUSH_TOKEN' }));
-      alert('ネイティブ端末の通知トークンを再同期しました。');
+    triggerHaptic('selection');
+    if (isNativeIosApp()) {
+      postNativeMessage({ type: 'REQUEST_PUSH_TOKEN' });
+      const fallback = localStorage.getItem(DEVICE_TOKEN_STORAGE_KEY) || 'ios_native_local_notification_enabled';
+      await saveTokenToUserAccount(currentUser, fallback);
+      alert('iOSネイティブ通知トークンを最新の状態に同期しました！');
       return;
     }
     const token = await registerSwAndFetchToken();
@@ -2215,20 +2249,29 @@ export default function App() {
 
   const handleSendSelfTestPush = async () => {
     if (!currentUser) return;
+    triggerHaptic('success');
+    if (isNativeIosApp()) {
+      showNativeLocalNotification({
+        id: `test_ios_${Date.now()}`,
+        title: '🔔 WithFit 通知テスト',
+        body: 'iOSネイティブ通知（バナー・サウンド）が正常に稼働しています！🔥',
+        data: { type: 'general' }
+      });
+    }
     const res = await sendNotification(
       currentUser,
-      '🔔 通知システムテスト',
-      'WithFitの新しい通知システムが正常に稼働しています！',
+      '🔔 WithFit 通知テスト',
+      'iOSネイティブ通知＆リアルタイム通知が正常に稼働しています！🔥',
       'general',
       null,
       { allowSelf: true }
     );
-    if (res.pushSuccess) {
-      alert('テスト通知（アプリ内＋プッシュ通知）を送信しました！');
-    } else if (res.inAppSuccess) {
-      alert('アプリ内テスト通知を送信しました！（※サーバー環境変数が未設定またはローカル環境のため、アプリ内バナーで表示されます）');
-    } else {
-      alert('テスト通知の送信に失敗しました。');
+    if (!isNativeIosApp()) {
+      if (res.pushSuccess || res.inAppSuccess) {
+        alert('テスト通知を送信しました！');
+      } else {
+        alert('テスト通知の送信に失敗しました。');
+      }
     }
   };
 
