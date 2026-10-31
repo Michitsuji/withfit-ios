@@ -8,7 +8,7 @@ import { UserAvatar, renderUsernameWithBadge, SimpleChart } from './CommonUI';
 import { WorkoutCard } from './WorkoutCard';
 
 // --- 月間レポートコンポーネント ---
-function MonthlyReport({ monthDate, posts, userName, accountsInfo }) {
+function MonthlyReport({ monthDate, posts, userName, accountsInfo, onUserClick }) {
   const year = monthDate.getFullYear();
   const month = monthDate.getMonth();
   const monthPosts = posts.filter(p => {
@@ -41,8 +41,8 @@ function MonthlyReport({ monthDate, posts, userName, accountsInfo }) {
   return (
     <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm animate-in fade-in">
       <div className="flex items-center gap-3 mb-5">
-         <UserAvatar userId={userName} accountsInfo={accountsInfo} size={32} />
-         <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1">{renderUsernameWithBadge(userName, accountsInfo[userName]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100")} のレポート</h3>
+         <UserAvatar userId={userName} accountsInfo={accountsInfo} size={32} onClick={onUserClick} />
+         <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1">{renderUsernameWithBadge(userName, accountsInfo[userName]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100", onUserClick)} のレポート</h3>
       </div>
       
       {!hasData ? (
@@ -347,7 +347,7 @@ function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport
 
       <div>
         <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">月間レポート ({month + 1}月)</h3>
-        <MonthlyReport monthDate={currentMonth} posts={posts} userName={displayUser} accountsInfo={accountsInfo} />
+        <MonthlyReport monthDate={currentMonth} posts={posts} userName={displayUser} accountsInfo={accountsInfo} onUserClick={onUserClick} />
       </div>
 
       <div ref={calendarCardRef} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">

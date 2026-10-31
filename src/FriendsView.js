@@ -6,12 +6,12 @@ import { Users, Flame, Circle, Trophy, Target, Copy, UserPlus, AlignLeft, Bell, 
 import { onSnapshot, collection, setDoc, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { db, appId } from './firebase';
 import { MASTER_USER, formatDateFromTimestamp } from './utils';
-import { renderUsernameWithBadge, TimerDisplay, LiquidGlassSegmented } from './CommonUI';
+import { UserAvatar, renderUsernameWithBadge, TimerDisplay, LiquidGlassSegmented } from './CommonUI';
 import { copyTextToClipboard } from './nativeBridge';
 import { DataView } from './DataView';
 
 // --- フレンド画面 ---
-function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush }) {
+function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush }) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [reportsCount, setReportsCount] = useState(0);
 
@@ -172,10 +172,8 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
                 {myInfo.partnerRequests.map(reqUser => (
                    <div key={reqUser} className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-xl p-3 flex items-center justify-between shadow-sm">
                       <div className="flex items-center gap-3">
-                         <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-500 dark:text-slate-400 overflow-hidden">
-                            {accountsInfo[reqUser]?.photoUrl ? <img src={accountsInfo[reqUser].photoUrl} alt={reqUser} className="w-full h-full object-cover" /> : accountsInfo[reqUser]?.displayName ? accountsInfo[reqUser].displayName.charAt(0).toUpperCase() : reqUser.charAt(0).toUpperCase()}
-                         </div>
-                         {renderUsernameWithBadge(reqUser, accountsInfo[reqUser]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100 text-sm")}
+                         <UserAvatar userId={reqUser} accountsInfo={accountsInfo} size={40} onClick={onUserClick} />
+                         {renderUsernameWithBadge(reqUser, accountsInfo[reqUser]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100 text-sm", onUserClick)}
                       </div>
                       <div className="flex gap-2">
                          <button onClick={() => onAcceptPartnerRequest(reqUser)} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors">承認</button>
@@ -208,10 +206,8 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
                        return (
                          <div key={f} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-500 dark:text-slate-400 overflow-hidden">
-                                 {fInfo?.photoUrl ? <img src={fInfo.photoUrl} alt={f} className="w-full h-full object-cover" /> : fInfo?.displayName ? fInfo.displayName.charAt(0).toUpperCase() : f.charAt(0).toUpperCase()}
-                              </div>
-                              {renderUsernameWithBadge(f, fInfo?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-200 text-sm")}
+                              <UserAvatar userId={f} accountsInfo={accountsInfo} size={32} onClick={onUserClick} />
+                              {renderUsernameWithBadge(f, fInfo?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-200 text-sm", onUserClick)}
                            </div>
                            {hasRequested ? (
                               <span className="text-[10px] font-bold text-slate-400 px-3 py-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg">申請済</span>
@@ -235,12 +231,10 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
             
             <div className="flex flex-col items-center justify-center text-center relative z-10 py-4">
               <div className="relative mb-4">
-                <div className={`w-24 h-24 rounded-full bg-white border-4 ${iconBorder} shadow-xl flex items-center justify-center text-3xl font-bold overflow-hidden`}>
-                  {partnerInfo.photoUrl ? <img src={partnerInfo.photoUrl} alt={partnerName} className="w-full h-full object-cover" /> : <span className="text-slate-800">{partnerName.charAt(0).toUpperCase()}</span>}
-                </div>
+                <UserAvatar userId={partnerName} accountsInfo={accountsInfo} size={96} className="shadow-xl" onClick={onUserClick} />
                 <div className={`absolute bottom-0 right-0 w-6 h-6 border-4 border-white rounded-full ${badgeColor} z-20`}></div>
               </div>
-              <p className="font-bold text-2xl mb-1">{partnerInfo.displayName || partnerName}</p>
+              <p className="font-bold text-2xl mb-1 cursor-pointer" onClick={() => onUserClick && onUserClick(partnerName)}>{partnerInfo.displayName || partnerName}</p>
               
               {partnerInfo.goal && (
                  <div className="mt-2 bg-black/20 px-4 py-2 rounded-xl text-sm font-bold backdrop-blur-sm w-full max-w-[280px]">
@@ -480,10 +474,8 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
                   <div key={user.username} className={`flex items-center justify-between p-2.5 rounded-2xl border backdrop-blur-md transition-all ${isMe ? 'bg-white/20 border-white/40 shadow-md' : 'bg-black/10 border-white/10 hover:bg-black/20'}`}>
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-6 flex justify-center items-center shrink-0">{rankBadge}</div>
-                      <div className="w-7 h-7 rounded-full bg-white/20 border border-white/20 overflow-hidden flex items-center justify-center font-bold text-xs shrink-0">
-                        {user.photoUrl ? <img src={user.photoUrl} alt="" className="w-full h-full object-cover" /> : user.displayName.charAt(0).toUpperCase()}
-                      </div>
-                      {renderUsernameWithBadge(user.username, user.displayName, accountsInfo, `text-xs font-bold truncate ${isMe ? 'text-amber-200' : ''}`)}
+                      <UserAvatar userId={user.username} accountsInfo={accountsInfo} size={28} onClick={onUserClick} />
+                      {renderUsernameWithBadge(user.username, user.displayName, accountsInfo, `text-xs font-bold truncate ${isMe ? 'text-amber-200' : ''}`, onUserClick)}
                     </div>
                     <span className="font-mono font-bold text-xs bg-black/20 px-2.5 py-1 rounded-full shrink-0">
                       {Math.round(user.volume).toLocaleString()}<span className="text-[9px] font-normal ml-0.5">kg</span>
@@ -508,10 +500,8 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
                 {myInfo.friendRequests.map(reqUser => (
                    <div key={reqUser} className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900 rounded-xl p-3 flex items-center justify-between shadow-sm">
                       <div className="flex items-center gap-3">
-                         <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-500 dark:text-slate-400 overflow-hidden">
-                            {accountsInfo[reqUser]?.photoUrl ? <img src={accountsInfo[reqUser].photoUrl} alt={reqUser} className="w-full h-full object-cover" /> : accountsInfo[reqUser]?.displayName ? accountsInfo[reqUser].displayName.charAt(0).toUpperCase() : reqUser.charAt(0).toUpperCase()}
-                         </div>
-                         {renderUsernameWithBadge(reqUser, accountsInfo[reqUser]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100 text-sm")}
+                         <UserAvatar userId={reqUser} accountsInfo={accountsInfo} size={40} onClick={onUserClick} />
+                         {renderUsernameWithBadge(reqUser, accountsInfo[reqUser]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100 text-sm", onUserClick)}
                       </div>
                       <div className="flex gap-2">
                          <button onClick={() => onAccept(reqUser)} className="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg transition-colors">承認</button>
@@ -523,12 +513,10 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
           )}
 
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-white text-lg shrink-0 overflow-hidden" style={{ backgroundColor: myInfo?.userColor || '#10b981', border: `2px solid ${myInfo?.userColor || '#10b981'}` }}>
-              {myInfo?.photoUrl ? <img src={myInfo.photoUrl} alt="" className="w-full h-full object-cover" /> : myInfo?.displayName ? myInfo.displayName.charAt(0).toUpperCase() : currentUser.charAt(0).toUpperCase()}
-            </div>
+            <UserAvatar userId={currentUser} accountsInfo={accountsInfo} size={48} onClick={onUserClick} />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <span className="font-bold text-slate-800 dark:text-slate-100 text-base truncate">{myInfo?.displayName || currentUser}</span>
+                <span className="font-bold text-slate-800 dark:text-slate-100 text-base truncate cursor-pointer" onClick={() => onUserClick && onUserClick(currentUser)}>{myInfo?.displayName || currentUser}</span>
                 <span className="text-[10px] font-bold bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 shrink-0">あなた</span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-bold truncate">{myInfo?.goal || '目標を設定してトレーニングを頑張りましょう'}</p>
@@ -555,9 +543,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onSendRequest, onAccep
                 <div key={friendUsername} onClick={() => onFriendClick && onFriendClick(friendUsername)} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex items-center justify-between group cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="relative">
-                      <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-xl font-bold text-slate-600 dark:text-slate-300 overflow-hidden">
-                        {friendInfo.photoUrl ? <img src={friendInfo.photoUrl} alt={friendUsername} className="w-full h-full object-cover" /> : friendInfo.displayName ? friendInfo.displayName.charAt(0).toUpperCase() : friendUsername.charAt(0).toUpperCase()}
-                      </div>
+                      <UserAvatar userId={friendUsername} accountsInfo={accountsInfo} size={48} />
                       <div className={`absolute bottom-0 right-0 w-3.5 h-3.5 border-2 border-white dark:border-slate-900 rounded-full z-10 ${isTraining ? 'bg-amber-400' : isOnline ? 'bg-emerald-400' : 'bg-slate-400'}`}></div>
                     </div>
                     <div>
@@ -602,10 +588,8 @@ function FriendDetailModal({ friendUsername, posts, accountsInfo, onClose, onTog
       <div className="bg-slate-50 dark:bg-slate-950 sm:rounded-3xl rounded-t-3xl flex flex-col h-[90vh] sm:h-[85vh] w-full sm:max-w-md overflow-hidden shadow-2xl relative" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 sticky top-0 z-10 pt-safe">
           <div className="flex items-center gap-2">
-             <div className="w-8 h-8 rounded-full overflow-hidden flex items-center justify-center font-bold text-white text-xs bg-slate-600 border border-slate-200 dark:border-slate-700">
-                {friendInfo.photoUrl ? <img src={friendInfo.photoUrl} alt={friendUsername} className="w-full h-full object-cover" /> : friendInfo.displayName ? friendInfo.displayName.charAt(0).toUpperCase() : friendUsername.charAt(0).toUpperCase()}
-             </div>
-             <h2>{renderUsernameWithBadge(friendUsername, friendInfo.displayName, accountsInfo, "text-lg font-bold text-slate-800 dark:text-white")}</h2>
+             <UserAvatar userId={friendUsername} accountsInfo={accountsInfo} size={32} onClick={onUserClick} />
+             <h2>{renderUsernameWithBadge(friendUsername, friendInfo.displayName, accountsInfo, "text-lg font-bold text-slate-800 dark:text-white", onUserClick)}</h2>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800 rounded-full"><X size={20} /></button>
         </div>
@@ -685,11 +669,9 @@ function ReportsModal({ isOpen, onClose, db, accountsInfo }) {
                 <div key={report.id} className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded-2xl border border-slate-200 dark:border-slate-800 relative">
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center font-bold text-[9px] overflow-hidden">
-                        {uInfo?.photoUrl ? <img src={uInfo.photoUrl} alt="" className="w-full h-full object-cover" /> : report.author.charAt(0).toUpperCase()}
-                      </div>
+                      <UserAvatar userId={report.author} accountsInfo={accountsInfo} size={24} onClick={onUserClick} />
                       <div className="flex flex-col">
-                        {renderUsernameWithBadge(report.author, uInfo?.displayName, accountsInfo, "text-xs font-bold text-slate-800 dark:text-slate-200")}
+                        {renderUsernameWithBadge(report.author, uInfo?.displayName, accountsInfo, "text-xs font-bold text-slate-800 dark:text-slate-200", onUserClick)}
                         <span className="text-[9px] text-slate-400">{getRelativeTime(report.timestamp)}</span>
                       </div>
                     </div>

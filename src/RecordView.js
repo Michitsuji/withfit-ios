@@ -375,7 +375,7 @@ function PastExercisePickerModal({ isOpen, onClose, pastPosts, onSelectExerciseI
   );
 }
 
-function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAcceptJointTraining, onRejectJointTraining, onCancelJointTraining, onImportItem, myInfo, gyms, exercises, workoutItems, setWorkoutItems, selectedCategories, setSelectedCategories, posts, currentUser, isManual, setIsManual, onActiveExerciseChange, accountsInfo }) {
+function RecordView({ onUserClick, onStart, onPost, onCancel, onRequestJointTraining, onAcceptJointTraining, onRejectJointTraining, onCancelJointTraining, onImportItem, myInfo, gyms, exercises, workoutItems, setWorkoutItems, selectedCategories, setSelectedCategories, posts, currentUser, isManual, setIsManual, onActiveExerciseChange, accountsInfo }) {
   const joinedGyms = myInfo.joinedGyms || ['common'];
   const jointPartnerId = myInfo.jointPartnerId;
   const partnerItems = jointPartnerId ? (accountsInfo[jointPartnerId]?.currentWorkoutItems || []) : [];
@@ -1163,7 +1163,7 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
                       const hasRequested = (accountsInfo[f]?.jointTrainingRequests || []).includes(currentUser);
                       return (
                       <button key={f} onClick={() => !hasRequested && onRequestJointTraining(f)} disabled={hasRequested} className={`flex items-center gap-1.5 bg-white dark:bg-slate-900 border text-xs font-bold px-3 py-2 rounded-xl shrink-0 transition-colors shadow-sm ${hasRequested ? 'border-slate-200 text-slate-400 cursor-not-allowed' : 'border-orange-200 text-orange-600 hover:bg-orange-100'}`}>
-                        <UserAvatar userId={f} accountsInfo={accountsInfo} size={20} className="border-transparent" />
+                        <UserAvatar userId={f} accountsInfo={accountsInfo} size={20} className="border-transparent" onClick={onUserClick} />
                         {accountsInfo[f]?.displayName || f} {hasRequested ? '申請済み' : 'に合トレ申請'}
                       </button>
                     )})}
@@ -1177,7 +1177,7 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
                        {myInfo.jointTrainingRequests.map(reqId => (
                           <div key={reqId} className="flex items-center justify-between bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 p-2 rounded-xl shadow-sm">
                              <div className="flex items-center gap-2">
-                               <UserAvatar userId={reqId} accountsInfo={accountsInfo} size={24} className="border-transparent" />
+                               <UserAvatar userId={reqId} accountsInfo={accountsInfo} size={24} className="border-transparent" onClick={onUserClick} />
                                <span className="text-sm font-bold text-slate-800 dark:text-slate-100">{accountsInfo[reqId]?.displayName || reqId}</span>
                              </div>
                              <div className="flex gap-1">
@@ -1278,7 +1278,7 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
                  {jointPartnerId && pItem ? (
                    <div className="relative opacity-90 scale-[0.98]">
                      <div className="absolute -top-3 left-4 z-10 bg-orange-500 text-white px-2 py-0.5 rounded-full shadow-sm text-[10px] font-bold flex items-center gap-1">
-                       <UserAvatar userId={jointPartnerId} accountsInfo={accountsInfo} size={16} className="border-transparent" />
+                       <UserAvatar userId={jointPartnerId} accountsInfo={accountsInfo} size={16} className="border-transparent" onClick={onUserClick} />
                        {accountsInfo[jointPartnerId]?.displayName || jointPartnerId}
                      </div>
                      <WorkoutItemForm 

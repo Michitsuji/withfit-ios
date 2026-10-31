@@ -702,7 +702,7 @@ function ExercisesView({ gyms, exercises, posts, accountsInfo, currentUser, myIn
                               return (
                                 <div key={mId} className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950 pl-2 pr-1.5 py-1.5 rounded-full border border-slate-100 dark:border-slate-800">
                                   <UserAvatar userId={mId} accountsInfo={accountsInfo} size={20} className="border-transparent" onClick={onUserClick} />
-                                  {renderUsernameWithBadge(mId, mInfo?.displayName, accountsInfo, "text-xs font-bold text-slate-600 dark:text-slate-300 truncate max-w-[80px]")}
+                                  {renderUsernameWithBadge(mId, mInfo?.displayName, accountsInfo, "text-xs font-bold text-slate-600 dark:text-slate-300 truncate max-w-[80px]", onUserClick)}
                                   {!isMe && !isFriend && !hasRequested && (
                                     <button onClick={() => onSendRequest(mId)} className="ml-1 p-1 bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 rounded-full hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors shrink-0" title="フレンド申請">
                                       <UserPlus size={12} />

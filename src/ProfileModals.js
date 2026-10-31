@@ -464,12 +464,17 @@ function ProfileModal({
 }
 
 // --- ユーザープロフィールモーダル ---
-function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUser, onSendRequest }) {
+function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUser, onSendRequest, onUserClick }) {
   const [view, setView] = useState('profile');
 
   useEffect(() => {
     if (isOpen) setView('profile');
   }, [isOpen]);
+
+  // モーダル内で別のユーザーを選んだらプロフィール表示に戻す
+  useEffect(() => {
+    setView('profile');
+  }, [targetUser]);
 
   if (!isOpen || !targetUser) return null;
 
@@ -529,8 +534,8 @@ function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUs
                   return (
                     <div key={fId} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800">
                       <div className="flex items-center gap-3">
-                        <UserAvatar userId={fId} accountsInfo={accountsInfo} size={40} />
-                        <span className="font-bold text-slate-800 dark:text-slate-200 text-sm truncate">{fInfo?.displayName || fId}</span>
+                        <UserAvatar userId={fId} accountsInfo={accountsInfo} size={40} onClick={onUserClick} />
+                        <span className="font-bold text-slate-800 dark:text-slate-200 text-sm truncate cursor-pointer" onClick={() => onUserClick && onUserClick(fId)}>{fInfo?.displayName || fId}</span>
                       </div>
                       {!isMe && !isMyFriend && !hasRequested && (
                         <button onClick={() => onSendRequest(fId)} className="shrink-0 text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 transition-colors">

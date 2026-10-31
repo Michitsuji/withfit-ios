@@ -158,7 +158,7 @@ const BackgroundCats = () => (
 
 let sharedAudioCtx = null;
 
-function SecretGame({ onClose, currentUser, accountsInfo = {}, appId }) {
+function SecretGame({ onClose, currentUser, accountsInfo = {}, appId, onUserClick }) {
   // パズル表示中はネイティブの下タブバーを隠す（閉じたら元に戻す）
   useEffect(() => {
     setNativeTabBarHidden(true);
@@ -572,10 +572,10 @@ function SecretGame({ onClose, currentUser, accountsInfo = {}, appId }) {
 
                     {/* ユーザーアバター＆名前 */}
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <UserAvatar userId={entry.uid} accountsInfo={accountsInfo} size={36} />
+                      <UserAvatar userId={entry.uid} accountsInfo={accountsInfo} size={36} onClick={onUserClick} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1 flex-wrap">
-                          <span className="font-bold text-gray-800 text-sm truncate">
+                          <span className="font-bold text-gray-800 text-sm truncate cursor-pointer" onClick={() => onUserClick && onUserClick(entry.uid)}>
                             {entry.displayName}
                           </span>
                           {entry.isMe && (

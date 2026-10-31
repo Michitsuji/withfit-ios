@@ -326,11 +326,14 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
   };
 
   const renderSetRow = (setObj, wType, type, isDrop, label) => {
+    // 統一レイアウト: 全ての行（通常/LR/プレート/片側/自重/有酸素、メイン/スーパー/ドロップ）で
+    // 「ラベル列（固定幅）＋ 数値ライン＋ バッジライン ＋ 1RMライン」の同じ骨格を使う。
+    // PRバッジは専用ラインに置くため、バッジの有無で数値の位置が一切ずれない。
     const isLR = wType === 'lr';
     const isPlate = wType === 'plate';
     const isBodyWeight = wType === 'bodyWeight';
     const isCardio = wType === 'cardio';
-    
+
     const val = (f) => {
       let fieldName = f;
       if (type === 'super2') fieldName = 'super' + f.charAt(0).toUpperCase() + f.slice(1);
@@ -338,18 +341,24 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
       return setObj[fieldName] || '';
     };
 
+    // ラベル色とインデントは行単位で統一（ドロップ=オレンジ、スーパー=紫、メイン=グレー）
+    let labelColorClass = 'text-slate-500 dark:text-slate-400';
+    if (isDrop) labelColorClass = 'text-orange-500';
+    else if (type !== 'main') labelColorClass = 'text-purple-500 dark:text-purple-400';
+    const indentClass = (isDrop || type !== 'main') ? 'pl-4' : '';
+
     if (isCardio) {
       const distance = val('distance');
       const time = val('time');
       const calories = val('calories');
       if (!distance && !time && !calories) return null;
       return (
-        <div className={`flex justify-between items-center border-b border-slate-200/50 dark:border-slate-800/50 pb-2 pt-2 last:border-0 ${isDrop ? 'pl-8' : ''}`}>
-          <span className="font-bold w-16 text-sm shrink-0 text-slate-500 dark:text-slate-400">{label}</span>
-          <div className="flex-1 flex flex-wrap justify-end items-center px-1 gap-2">
-             {distance && <span className="font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">{distance}<span className="text-xs font-normal text-slate-400 ml-0.5">km</span></span>}
-             {time && <span className="font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">{time}<span className="text-xs font-normal text-slate-400 ml-0.5">分</span></span>}
-             {calories && <span className="font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">{calories}<span className="text-xs font-normal text-slate-400 ml-0.5">kcal</span></span>}
+        <div className={`flex items-start border-b border-slate-200/50 dark:border-slate-800/50 py-2 last:border-0 ${indentClass}`}>
+          <span className={`font-bold w-14 text-xs shrink-0 pt-0.5 ${labelColorClass}`}>{label}</span>
+          <div className="flex-1 min-w-0 flex flex-wrap justify-center items-baseline gap-x-3 gap-y-0.5 px-1">
+            {distance && <span className="font-bold text-[15px] text-slate-800 dark:text-slate-100 whitespace-nowrap">{distance}<span className="text-[10px] font-normal text-slate-400 ml-0.5">km</span></span>}
+            {time && <span className="font-bold text-[15px] text-slate-800 dark:text-slate-100 whitespace-nowrap">{time}<span className="text-[10px] font-normal text-slate-400 ml-0.5">分</span></span>}
+            {calories && <span className="font-bold text-[15px] text-slate-800 dark:text-slate-100 whitespace-nowrap">{calories}<span className="text-[10px] font-normal text-slate-400 ml-0.5">kcal</span></span>}
           </div>
         </div>
       );
@@ -363,88 +372,60 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
 
     if (!weight && !reps && !lReps && !rReps) return null;
 
-    const forced = forcedReps ? <span className="text-rose-500 text-xs ml-1">(+{forcedReps})</span> : null;
-    const prBadgeWeight = setObj.isWeightPR && type === 'main' ? <span className="ml-1 text-[10px] text-amber-500 bg-amber-50 dark:bg-amber-950/50 px-1 py-0.5 rounded border border-amber-200 dark:border-amber-900 font-bold whitespace-nowrap">🏆重量更新</span> : null;
-    const prBadgeReps = setObj.isRepsPR && type === 'main' ? <span className="ml-1 text-[10px] text-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 px-1 py-0.5 rounded border border-indigo-200 dark:border-indigo-900 font-bold whitespace-nowrap">🎖️回数更新</span> : null;
+    const forced = forcedReps ? <span className="text-rose-500 text-xs ml-1 whitespace-nowrap">(+{forcedReps})</span> : null;
+    const showBadges = type === 'main' && (setObj.isWeightPR || setObj.isRepsPR);
 
     let displayWeight = weight || 0;
     let weightLabel = 'kg';
-    
+
     if (isPlate) weightLabel = '枚';
     else if (wType === 'oneSide') weightLabel = 'kg(片)';
     else if (isBodyWeight) {
-      if (Number(weight) < 0) { displayWeight = weight; weightLabel = 'kg'; } 
-      else if (Number(weight) > 0) { displayWeight = `+${weight}`; weightLabel = 'kg'; } 
+      if (Number(weight) < 0) { displayWeight = weight; weightLabel = 'kg'; }
+      else if (Number(weight) > 0) { displayWeight = `+${weight}`; weightLabel = 'kg'; }
       else { displayWeight = '自重'; weightLabel = ''; }
     }
 
-    let labelColorClass = 'text-slate-500 dark:text-slate-400';
-    if (isDrop) {
-      labelColorClass = 'text-orange-500';
-    } else if (type !== 'main') {
-      labelColorClass = 'text-purple-500 dark:text-purple-400 pl-4';
-    }
-
     let rmTextNode = null;
-    if (!isCardio && weight && wType !== 'bodyWeight') {
-       const currentReps = isLR ? Math.max(Number(lReps)||0, Number(rReps)||0) : (Number(reps)||0);
-       const wNum = Number(weight);
-       if (wNum > 0 && currentReps > 0) {
-          const rm = Math.round((wNum * (1 + currentReps / 40)) * 10) / 10;
-          rmTextNode = <div className="text-[10px] text-slate-400 font-bold w-full text-center mt-0.5">推定1RM: {rm}kg</div>;
-       }
+    if (weight && wType !== 'bodyWeight') {
+      const currentReps = isLR ? Math.max(Number(lReps) || 0, Number(rReps) || 0) : (Number(reps) || 0);
+      const wNum = Number(weight);
+      if (wNum > 0 && currentReps > 0) {
+        const rm = Math.round((wNum * (1 + currentReps / 40)) * 10) / 10;
+        rmTextNode = <div className="text-[10px] text-slate-400 font-bold text-center mt-0.5">推定1RM: {rm}kg</div>;
+      }
     }
 
     return (
-      <div className={`flex justify-between items-center border-b border-slate-200/50 dark:border-slate-800/50 pb-1.5 pt-1.5 last:border-0 ${isDrop ? 'pl-5' : ''}`}>
-        <span className={`font-bold w-12 text-xs shrink-0 flex items-center ${labelColorClass}`}>
-          {label}
-        </span>
-        {isLR ? (
-           <div className="flex-1 flex flex-col justify-center items-center px-1 min-w-0">
-             <div className="flex justify-center items-center gap-1.5 sm:gap-2 w-full">
-               <div className="flex flex-col items-end min-w-[50px] sm:min-w-[60px]">
-                 <div className="flex items-baseline gap-0.5">
-                   <span className="font-bold text-[15px] sm:text-base tracking-wide text-slate-800 dark:text-slate-100">{displayWeight}</span>
-                   {weightLabel && <span className="text-[10px] font-normal text-slate-400">{weightLabel}</span>}
-                 </div>
-                 {prBadgeWeight}
-               </div>
-               <span className="text-slate-300 dark:text-slate-600 font-bold px-1">×</span>
-               <div className="flex flex-col items-start min-w-[70px] sm:min-w-[80px]">
-                 <div className="flex items-baseline gap-0.5">
-                   <span className="font-bold text-sm text-slate-800 dark:text-slate-100">L:{lReps||0} R:{rReps||0}</span>
-                   <span className="text-[10px] font-normal text-slate-400">回</span>
-                   {forced}
-                 </div>
-                 {prBadgeReps}
-               </div>
-             </div>
-             {rmTextNode}
-           </div>
-        ) : (
-           <div className="flex-1 flex flex-col justify-center items-center px-1 min-w-0">
-             <div className="flex justify-center items-center gap-2 sm:gap-3 w-full">
-               <div className="flex flex-col items-end min-w-[50px] sm:min-w-[60px]">
-                 <div className="flex items-baseline gap-0.5">
-                   <span className="font-bold text-[15px] sm:text-base tracking-wide text-slate-800 dark:text-slate-100">{displayWeight}</span>
-                   {weightLabel && <span className="text-[10px] font-normal text-slate-400">{weightLabel}</span>}
-                 </div>
-                 {prBadgeWeight}
-               </div>
-               <span className="text-slate-300 dark:text-slate-600 font-bold">×</span>
-               <div className="flex flex-col items-start min-w-[50px] sm:min-w-[60px]">
-                 <div className="flex items-baseline gap-0.5">
-                   <span className="font-bold text-[15px] sm:text-base tracking-wide text-slate-800 dark:text-slate-100">{reps || 0}</span>
-                   <span className="text-[10px] font-normal text-slate-400">回</span>
-                   {forced}
-                 </div>
-                 {prBadgeReps}
-               </div>
-             </div>
-             {rmTextNode}
-           </div>
-        )}
+      <div className={`flex items-start border-b border-slate-200/50 dark:border-slate-800/50 py-2 last:border-0 ${indentClass}`}>
+        <span className={`font-bold w-14 text-xs shrink-0 pt-0.5 ${labelColorClass}`}>{label}</span>
+        <div className="flex-1 min-w-0 px-1">
+          {/* 数値ライン: 重量スロットと回数スロットは全行で固定幅。バッジでは絶対にずれない */}
+          <div className="flex justify-center items-baseline gap-2">
+            <span className="inline-flex items-baseline justify-end gap-0.5 min-w-[58px]">
+              <span className="font-bold text-[15px] sm:text-base tracking-wide text-slate-800 dark:text-slate-100">{displayWeight}</span>
+              {weightLabel && <span className="text-[10px] font-normal text-slate-400">{weightLabel}</span>}
+            </span>
+            <span className="text-slate-300 dark:text-slate-600 font-bold">×</span>
+            <span className="inline-flex items-baseline justify-start gap-0.5 min-w-[66px]">
+              {isLR ? (
+                <span className="font-bold text-[13px] tracking-tight text-slate-800 dark:text-slate-100 whitespace-nowrap">L:{lReps || 0} R:{rReps || 0}</span>
+              ) : (
+                <span className="font-bold text-[15px] sm:text-base tracking-wide text-slate-800 dark:text-slate-100">{reps || 0}</span>
+              )}
+              <span className="text-[10px] font-normal text-slate-400">回</span>
+              {forced}
+            </span>
+          </div>
+          {/* バッジライン: PRバッジ専用の行。数値ラインとは分離し、両方同時表示もここに並ぶ */}
+          {showBadges && (
+            <div className="flex justify-center flex-wrap gap-1 mt-1">
+              {setObj.isWeightPR && <span className="text-[10px] text-amber-500 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-900 font-bold whitespace-nowrap">🏆重量更新</span>}
+              {setObj.isRepsPR && <span className="text-[10px] text-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-900 font-bold whitespace-nowrap">🎖️回数更新</span>}
+            </div>
+          )}
+          {rmTextNode}
+        </div>
       </div>
     );
   };
@@ -454,6 +435,17 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
   const lbmValue = (!hideMetrics && post.bodyWeight && post.bodyFat)
     ? (Number(post.bodyWeight) * (1 - Number(post.bodyFat) / 100)).toFixed(1)
     : null;
+
+  const volumeText = Number(displayVolumeCalc).toLocaleString();
+  const caloriesText = Number(displayCalories).toLocaleString();
+  const setsText = String(displaySets);
+  // 桁数の多い数値はフォントを段階的に小さくする（3カラムグリッドからのはみ出し防止）
+  const metricValueClass = (formatted) => {
+    const len = String(formatted).length;
+    if (len >= 8) return 'text-[15px] sm:text-base';
+    if (len >= 7) return 'text-base sm:text-lg';
+    return 'text-lg sm:text-xl';
+  };
 
   return (
     <div id={`post-${post.id}`} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm overflow-hidden relative mb-4">
@@ -470,11 +462,11 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
           )}
           <div className="flex-1 min-w-0 pt-0.5">
             <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-              {renderUsernameWithBadge(post.author, authorInfo?.displayName, accountsInfo)}
+              {renderUsernameWithBadge(post.author, authorInfo?.displayName, accountsInfo, undefined, onUserClick)}
               {post.jointWith && (
                 <>
                   <span className="text-[10px] font-bold text-slate-400 shrink-0">&</span>
-                  {renderUsernameWithBadge(post.jointWith, accountsInfo?.[post.jointWith]?.displayName, accountsInfo)}
+                  {renderUsernameWithBadge(post.jointWith, accountsInfo?.[post.jointWith]?.displayName, accountsInfo, undefined, onUserClick)}
                 </>
               )}
             </div>
@@ -518,12 +510,57 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
           {/* ワークアウト統計セクション（総負荷量・セット数・消費カロリー） */}
           {hasWorkoutStats && (
             <div>
-              {/* 上部バー：負荷量メタファー＆構成コピーボタン */}
+              {/* 3カラムメトリクスグリッド */}
+              <div className="grid grid-cols-3 divide-x divide-slate-200/70 dark:divide-slate-800 text-center">
+                <div className="px-1 flex flex-col items-center justify-center">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
+                    <Dumbbell size={11} className="text-emerald-500 shrink-0" />
+                    <span>総負荷量</span>
+                  </div>
+                  <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
+                    <span className={`${metricValueClass(volumeText)} font-black tracking-tight font-mono text-emerald-600 dark:text-emerald-400 leading-tight`}>
+                      {volumeText}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">kg</span>
+                  </div>
+                </div>
+
+                <div className="px-1 flex flex-col items-center justify-center">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
+                    <ListPlus size={11} className="text-indigo-500 shrink-0" />
+                    <span>セット数</span>
+                  </div>
+                  <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
+                    <span className={`${metricValueClass(setsText)} font-black tracking-tight font-mono text-slate-800 dark:text-slate-100 leading-tight`}>
+                      {setsText}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">set</span>
+                    {processedItems.length > 0 && (
+                      <span className="text-[10px] font-bold text-slate-400 ml-0.5">({processedItems.length}種)</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="px-1 flex flex-col items-center justify-center">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
+                    <Flame size={11} className="text-amber-500 shrink-0" />
+                    <span>消費カロリー</span>
+                  </div>
+                  <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
+                    <span className={`${metricValueClass(caloriesText)} font-black tracking-tight font-mono text-amber-600 dark:text-amber-400 leading-tight`}>
+                      {caloriesText}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">kcal</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* フッター：負荷量メタファー＆構成コピーボタン（数値グリッドの下に置く） */}
               {(displayVolumeCalc > 0 || (onImport && post.items && post.items.length > 0)) && (
-                <div className="flex items-center justify-between gap-2 mb-2.5 pb-2 border-b border-slate-200/60 dark:border-slate-800/80">
+                <div className="flex items-center justify-between gap-2 mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-800/80">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 shadow-[0_0_6px_rgba(16,185,129,0.7)]"></span>
-                    <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 truncate">
+                    <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 truncate">
                       {displayVolumeCalc > 0 ? getVolumeMetaphor(displayVolumeCalc) : 'ワークアウトサマリー'}
                     </span>
                   </div>
@@ -540,51 +577,6 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
                   )}
                 </div>
               )}
-
-              {/* 3カラムメトリクスグリッド */}
-              <div className="grid grid-cols-3 divide-x divide-slate-200/70 dark:divide-slate-800 text-center">
-                <div className="px-1 flex flex-col items-center justify-center">
-                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
-                    <Dumbbell size={11} className="text-emerald-500 shrink-0" />
-                    <span>総負荷量</span>
-                  </div>
-                  <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
-                    <span className="text-lg sm:text-xl font-black tracking-tight font-mono text-emerald-600 dark:text-emerald-400 leading-tight">
-                      {Number(displayVolumeCalc).toLocaleString()}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400">kg</span>
-                  </div>
-                </div>
-
-                <div className="px-1 flex flex-col items-center justify-center">
-                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
-                    <ListPlus size={11} className="text-indigo-500 shrink-0" />
-                    <span>セット数</span>
-                  </div>
-                  <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
-                    <span className="text-lg sm:text-xl font-black tracking-tight font-mono text-slate-800 dark:text-slate-100 leading-tight">
-                      {displaySets}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400">set</span>
-                    {processedItems.length > 0 && (
-                      <span className="text-[10px] font-bold text-slate-400 ml-0.5">({processedItems.length}種)</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="px-1 flex flex-col items-center justify-center">
-                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
-                    <Flame size={11} className="text-amber-500 shrink-0" />
-                    <span>消費カロリー</span>
-                  </div>
-                  <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
-                    <span className="text-lg sm:text-xl font-black tracking-tight font-mono text-amber-600 dark:text-amber-400 leading-tight">
-                      {Number(displayCalories).toLocaleString()}
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-400">kcal</span>
-                  </div>
-                </div>
-              </div>
             </div>
           )}
 
@@ -770,12 +762,12 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
 
               return (
                 <div key={comment.id} className="flex gap-2.5">
-                  <UserAvatar userId={comment.author} accountsInfo={accountsInfo} size={32} className="mt-1" />
+                  <UserAvatar userId={comment.author} accountsInfo={accountsInfo} size={32} className="mt-1" onClick={onUserClick} />
                   <div className="flex-1 group min-w-0">
                     <div className="flex items-stretch gap-2">
                       <div className="bg-slate-50 dark:bg-slate-950/50 p-2.5 rounded-2xl rounded-tl-none border border-slate-100 dark:border-slate-800 relative inline-block max-w-[85%]">
                         <div className="flex items-baseline gap-2 mb-1">
-                          {renderUsernameWithBadge(comment.author, cInfo?.displayName, accountsInfo, "font-bold text-xs text-slate-800 dark:text-slate-200")}
+                          {renderUsernameWithBadge(comment.author, cInfo?.displayName, accountsInfo, "font-bold text-xs text-slate-800 dark:text-slate-200", onUserClick)}
                           <span className="text-[10px] text-slate-400 shrink-0">{getRelativeTime(comment.timestamp)}</span>
                         </div>
                         <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-words">{renderCommentText(comment.text)}</p>
@@ -890,8 +882,8 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
                   const uInfo = accountsInfo && accountsInfo[u];
                   return (
                     <div key={u} className="flex items-center gap-3 p-2 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-xl transition-colors">
-                      <UserAvatar userId={u} accountsInfo={accountsInfo} size={40} />
-                      <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">{uInfo?.displayName || u}</span>
+                      <UserAvatar userId={u} accountsInfo={accountsInfo} size={40} onClick={(uid) => { setShowLikesModal(false); onUserClick && onUserClick(uid); }} />
+                      <span className="font-bold text-slate-800 dark:text-slate-200 text-sm cursor-pointer" onClick={() => { setShowLikesModal(false); onUserClick && onUserClick(u); }}>{uInfo?.displayName || u}</span>
                     </div>
                   );
                 })

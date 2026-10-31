@@ -16,11 +16,11 @@ const WithFitLogo = ({ className = "", size = 24 }) => (
   </svg>
 );
 
-const renderUsernameWithBadge = (username, displayName, accountsInfo, className = "font-bold text-slate-800 dark:text-slate-100 truncate") => {
+const renderUsernameWithBadge = (username, displayName, accountsInfo, className = "font-bold text-slate-800 dark:text-slate-100 truncate", onUserClick = null) => {
   const isUserMaster = username === MASTER_USER;
   const isUserAcquaintance = !isUserMaster && accountsInfo && accountsInfo[MASTER_USER]?.friends?.includes(username);
   return (
-    <span className={`inline-flex items-center gap-1 ${className}`}>
+    <span className={`inline-flex items-center gap-1 ${className} ${onUserClick ? 'cursor-pointer' : ''}`} onClick={onUserClick ? (e) => { e.stopPropagation(); onUserClick(username); } : undefined}>
       <span className="truncate">{displayName || username || '不明'}</span>
       {isUserMaster && (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" style={{ color: '#3b82f6', fill: '#3b82f6' }} title="マスター">
