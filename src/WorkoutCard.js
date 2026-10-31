@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Clock, MapPin, Edit2, Trash2, MoreVertical, FileText, Scale, ListPlus, Copy, X, Dumbbell, Flame, Activity, Zap, AlignLeft, Heart, MessageCircle, ArrowDown, ArrowUp, Send, Plus } from 'lucide-react';
 import { generateColor, calculateWorkoutTotals, formatShortDateTime, formatDuration, getVolumeMetaphor, getCategoryColor, getRelativeTime } from './utils';
-import { UserAvatar, renderUsernameWithBadge, AdBanner } from './CommonUI';
+import { UserAvatar, renderUsernameWithBadge } from './CommonUI';
 import { copyTextToClipboard, triggerHaptic } from './nativeBridge';
 
 // --- 共通コンポーネント：ワークアウトカード ---
@@ -1075,7 +1075,6 @@ function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser
             {displayedPosts.map((post, index) => (
               <React.Fragment key={post.id}>
                 <WorkoutCard post={post} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={onEdit} onDelete={onDelete} onToggleLike={onToggleLike} onImport={onImport} onImportItem={onImportItem} onAddComment={onAddComment} onDeleteComment={onDeleteComment} onToggleCommentLike={onToggleCommentLike} onUserClick={onUserClick} />
-                {(index + 1) % 5 === 0 && <AdBanner />}
               </React.Fragment>
             ))}
             {posts.length > displayLimit && (

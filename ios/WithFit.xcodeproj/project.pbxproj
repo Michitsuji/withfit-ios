@@ -12,6 +12,8 @@
 		A10000030000000000000001 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000030000000000000001 /* MainViewController.swift */; };
 		A10000040000000000000001 /* LocalBundleServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000040000000000000001 /* LocalBundleServer.swift */; };
 		A10000050000000000000001 /* NativeAudioAndTimerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000050000000000000001 /* NativeAudioAndTimerManager.swift */; };
+		A10000100000000000000001 /* AdBannerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000100000000000000001 /* AdBannerManager.swift */; };
+		D10000010000000000000001 /* GoogleMobileAds in Frameworks */ = {isa = PBXBuildFile; productRef = D70000010000000000000001 /* GoogleMobileAds */; };
 		A10000060000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000060000000000000001 /* Assets.xcassets */; };
 		A10000070000000000000001 /* WebBundle in Resources */ = {isa = PBXBuildFile; fileRef = A20000070000000000000001 /* WebBundle */; };
 		A10000080000000000000001 /* alarm.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A20000080000000000000001 /* alarm.mp3 */; };
@@ -29,6 +31,7 @@
 		A20000030000000000000001 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		A20000040000000000000001 /* LocalBundleServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBundleServer.swift; sourceTree = "<group>"; };
 		A20000050000000000000001 /* NativeAudioAndTimerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAudioAndTimerManager.swift; sourceTree = "<group>"; };
+		A20000100000000000000001 /* AdBannerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdBannerManager.swift; sourceTree = "<group>"; };
 		A20000060000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20000070000000000000001 /* WebBundle */ = {isa = PBXFileReference; lastKnownFileType = folder; path = WebBundle; sourceTree = "<group>"; };
 		A20000080000000000000001 /* alarm.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = alarm.mp3; sourceTree = "<group>"; };
@@ -45,6 +48,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D10000010000000000000001 /* GoogleMobileAds in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -75,6 +79,7 @@
 				A20000030000000000000001 /* MainViewController.swift */,
 				A20000040000000000000001 /* LocalBundleServer.swift */,
 				A20000050000000000000001 /* NativeAudioAndTimerManager.swift */,
+				A20000100000000000000001 /* AdBannerManager.swift */,
 				B20000010000000000000001 /* TrainingActivityAttributes.swift */,
 				B20000020000000000000001 /* TrainingLiveActivityManager.swift */,
 				A20000060000000000000001 /* Assets.xcassets */,
@@ -121,6 +126,9 @@
 				C10000010000000000000001 /* PBXTargetDependency */,
 			);
 			name = WithFit;
+			packageProductDependencies = (
+				D70000010000000000000001 /* GoogleMobileAds */,
+			);
 			productName = WithFit;
 			productReference = A20000000000000000000001 /* WithFit.app */;
 			productType = "com.apple.product-type.application";
@@ -162,6 +170,9 @@
 				Base,
 			);
 			mainGroup = A40000010000000000000001;
+			packageReferences = (
+				D60000010000000000000001 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */,
+			);
 			productRefGroup = A40000030000000000000001 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -202,6 +213,7 @@
 				A10000030000000000000001 /* MainViewController.swift in Sources */,
 				A10000040000000000000001 /* LocalBundleServer.swift in Sources */,
 				A10000050000000000000001 /* NativeAudioAndTimerManager.swift in Sources */,
+				A10000100000000000000001 /* AdBannerManager.swift in Sources */,
 				B10000010000000000000001 /* TrainingActivityAttributes.swift in Sources */,
 				B10000020000000000000001 /* TrainingLiveActivityManager.swift in Sources */,
 			);
@@ -394,6 +406,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		D60000010000000000000001 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/googleads/swift-package-manager-google-mobile-ads.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 13.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D70000010000000000000001 /* GoogleMobileAds */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D60000010000000000000001 /* XCRemoteSwiftPackageReference "swift-package-manager-google-mobile-ads" */;
+			productName = GoogleMobileAds;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A90000010000000000000001 /* Project object */;
 }

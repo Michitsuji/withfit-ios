@@ -33,7 +33,8 @@ import {
   showNativeLocalNotification,
   checkNativePushPermission,
   setNativeTabBarHidden,
-  getApiUrl
+  getApiUrl,
+  initGlobalButtonHaptics
 } from './nativeBridge';
 
 const VAPID_PUBLIC_KEY = 'BAty8GYk1zuoZVh-ZaSdcJsq_o-7vXJLXPNVNzlgsq9rd3wP-jQtclYEdu1MnnLN_0BnlmiKuoWH3X2YvOFl7aM';
@@ -232,6 +233,7 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => { initGlobalButtonHaptics(); }, []);
   useEffect(() => {
     if (currentUser && pendingPushToken.current) {
       saveTokenToUserAccount(currentUser, pendingPushToken.current);

@@ -30,7 +30,26 @@ export function postNativeMessage(payload) {
 }
 
 // iOS Taptic Engine 触覚フィードバック
+let lastHapticAt = 0;
+
+let globalButtonHapticsInitialized = false;
+
+// 全ての <button> に共通の触覚フィードバックを付ける（App 起動時に一度だけ呼ぶ）。
+// 個別に triggerHaptic を呼んでいるボタンは、直前の発火を検知して二重に鳴らさない。
+export function initGlobalButtonHaptics() {
+  if (globalButtonHapticsInitialized || typeof document === 'undefined') return;
+  globalButtonHapticsInitialized = true;
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    const el = t && t.closest ? t.closest('button, [role="button"]') : null;
+    if (!el || el.disabled) return;
+    if (Date.now() - lastHapticAt < 120) return;
+    triggerHaptic('selection');
+  });
+}
+
 export function triggerHaptic(style = 'light') {
+  lastHapticAt = Date.now();
   if (postNativeMessage({ type: 'HAPTIC', style })) {
     return;
   }

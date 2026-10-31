@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Activity, PlusCircle, Trash2, Settings, Sun, Moon, Droplet, Sparkles, AlertTriangle, Users, UserPlus, ChevronLeft, Bell, CheckCircle, RefreshCw, Send } from 'lucide-react';
 import { GoogleAuthProvider, signInWithRedirect, getAuth, signInWithPopup } from 'firebase/auth';
-import { UserAvatar, ToggleSwitch, WithFitLogo, AdBanner } from './CommonUI';
+import { UserAvatar, ToggleSwitch, WithFitLogo } from './CommonUI';
 
 // --- プロフィール設定モーダル ---
 function ProfileModal({
@@ -631,9 +631,6 @@ function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
                    />
                    <span className="text-xs font-bold text-slate-600">利用規約に同意する</span>
                  </label>
-                 <div className="mt-4">
-                   <AdBanner />
-                 </div>
                </div>
                <button 
                  type="button"

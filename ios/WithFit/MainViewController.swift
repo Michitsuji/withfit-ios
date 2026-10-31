@@ -43,6 +43,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             attachWebView(to: firstVC)
         }
         loadWithFitApp()
+        AdBannerManager.shared.start(in: self)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -53,6 +54,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 self?.requestNativeNotificationPermissionIfNeeded()
             }
         }
+        AdBannerManager.shared.requestTrackingAuthorizationIfNeeded()
     }
 
     // MARK: - Genuine iOS 26 Native UITabBarController Setup (Liquid Glass UI)

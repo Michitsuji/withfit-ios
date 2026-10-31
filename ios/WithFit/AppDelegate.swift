@@ -1,6 +1,7 @@
 import UIKit
 import UserNotifications
 import AVFoundation
+import GoogleMobileAds
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -12,6 +13,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
         UNUserNotificationCenter.current().delegate = self
         NativeAudioAndTimerManager.shared.configureAudioSession()
         LocalBundleServer.shared.start()
+        MobileAds.shared.start()
         return true
     }
 
