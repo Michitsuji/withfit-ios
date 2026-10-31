@@ -570,7 +570,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
         </div>
       )}
 
-      <ReportsModal isOpen={showReportsModal} onClose={() => setShowReportsModal(false)} db={db} accountsInfo={accountsInfo} />
+      <ReportsModal isOpen={showReportsModal} onClose={() => setShowReportsModal(false)} db={db} accountsInfo={accountsInfo} onUserClick={onUserClick} />
 
       <div className="mt-12 text-center pb-4 pt-6 border-t border-slate-200/50 dark:border-slate-800/50">
         <p className="text-xs font-bold text-slate-400 dark:text-slate-500">WithFit v1.2.0 (2026.10.30, 04:59, updated)</p>
@@ -610,7 +610,7 @@ function FriendDetailModal({ friendUsername, posts, accountsInfo, onClose, onTog
 }
 
 // --- 不具合・要望一覧モーダル ---
-function ReportsModal({ isOpen, onClose, db, accountsInfo }) {
+function ReportsModal({ isOpen, onClose, db, accountsInfo, onUserClick }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
 
