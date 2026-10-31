@@ -19,13 +19,13 @@ final class TrainingLiveActivityManager {
     private init() {}
 
     /// トレーニング開始時に呼ぶ。既に同じ開始時刻の Activity があれば更新に回す
-    func start(startTime: Date, gymName: String, exerciseName: String, exerciseCount: Int, completedSets: Int, totalSets: Int) {
+    func start(startTime: Date, gymName: String, exerciseName: String, exerciseCount: Int, exerciseIndex: Int) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             print("[WithFit LiveActivity] Live Activities are not enabled")
             return
         }
         if let existing = activity, currentStartTime == startTime {
-            update(exerciseName: exerciseName, exerciseCount: exerciseCount, completedSets: completedSets, totalSets: totalSets)
+            update(exerciseName: exerciseName, exerciseCount: exerciseCount, exerciseIndex: exerciseIndex)
             return
         }
         // 開始時刻が違う古い Activity が残っていたら終了してから作り直す
@@ -35,8 +35,7 @@ final class TrainingLiveActivityManager {
         let initialState = TrainingActivityAttributes.ContentState(
             exerciseName: exerciseName,
             exerciseCount: exerciseCount,
-            completedSets: completedSets,
-            totalSets: totalSets
+            exerciseIndex: exerciseIndex
         )
         do {
             if #available(iOS 16.2, *) {
@@ -58,13 +57,12 @@ final class TrainingLiveActivityManager {
     }
 
     /// 種目名・種目数の変化時に呼ぶ
-    func update(exerciseName: String, exerciseCount: Int, completedSets: Int, totalSets: Int) {
+    func update(exerciseName: String, exerciseCount: Int, exerciseIndex: Int) {
         guard let activity = activity else { return }
         let state = TrainingActivityAttributes.ContentState(
             exerciseName: exerciseName,
             exerciseCount: exerciseCount,
-            completedSets: completedSets,
-            totalSets: totalSets
+            exerciseIndex: exerciseIndex
         )
         lastState = state
         Task {
@@ -90,8 +88,7 @@ final class TrainingLiveActivityManager {
         let finalState = lastState ?? TrainingActivityAttributes.ContentState(
             exerciseName: "",
             exerciseCount: 0,
-            completedSets: 0,
-            totalSets: 0
+            exerciseIndex: -1
         )
         lastState = nil
         Task {
@@ -107,13 +104,13 @@ final class TrainingLiveActivityManager {
     }
 
     /// SET_TRAINING_STATE ブリッジの受け口。状態に応じて開始/更新/終了を振り分ける
-    func syncTrainingState(isTraining: Bool, startTime: Date?, gymName: String, exerciseName: String, exerciseCount: Int, completedSets: Int, totalSets: Int) {
+    func syncTrainingState(isTraining: Bool, startTime: Date?, gymName: String, exerciseName: String, exerciseCount: Int, exerciseIndex: Int) {
         if isTraining {
             let startedAt = startTime ?? currentStartTime ?? Date()
             if activity == nil || currentStartTime != startedAt {
-                start(startTime: startedAt, gymName: gymName, exerciseName: exerciseName, exerciseCount: exerciseCount, completedSets: completedSets, totalSets: totalSets)
+                start(startTime: startedAt, gymName: gymName, exerciseName: exerciseName, exerciseCount: exerciseCount, exerciseIndex: exerciseIndex)
             } else {
-                update(exerciseName: exerciseName, exerciseCount: exerciseCount, completedSets: completedSets, totalSets: totalSets)
+                update(exerciseName: exerciseName, exerciseCount: exerciseCount, exerciseIndex: exerciseIndex)
             }
         } else {
             end()

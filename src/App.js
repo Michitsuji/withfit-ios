@@ -1773,11 +1773,10 @@ export default function App() {
 
   useEffect(() => {
     const gymName = allGyms.find(g => g.id === myInfo?.currentGymId)?.name || 'ジム';
-    const exerciseCount = (draftWorkoutItems || []).filter(i => i.exerciseName).length;
-    const currentItem = (draftWorkoutItems || []).find(i => i.exerciseName && i.exerciseName === myInfo?.currentExerciseName);
-    const totalSets = currentItem?.sets?.length || 0;
-    const completedSets = (currentItem?.sets || []).filter(s => s.done).length;
-    setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName, myInfo?.currentExerciseName || '', exerciseCount, completedSets, totalSets);
+    const namedItems = (draftWorkoutItems || []).filter(i => i.exerciseName);
+    const exerciseCount = namedItems.length;
+    const exerciseIndex = namedItems.findIndex(i => i.exerciseName === myInfo?.currentExerciseName);
+    setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName, myInfo?.currentExerciseName || '', exerciseCount, exerciseIndex);
   }, [myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.currentGymId, myInfo?.currentExerciseName, draftWorkoutItems, allGyms]);
 
   useEffect(() => {

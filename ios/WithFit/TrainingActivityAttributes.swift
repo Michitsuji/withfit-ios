@@ -14,10 +14,8 @@ struct TrainingActivityAttributes: ActivityAttributes {
         var exerciseName: String
         /// 記録中の種目の総数
         var exerciseCount: Int
-        /// 現在の種目で完了チェック済みのセット数
-        var completedSets: Int
-        /// 現在の種目の総セット数
-        var totalSets: Int
+        /// 現在の種目が何番目か（0始まり。未選択・不明は -1）
+        var exerciseIndex: Int
     }
 
     /// トレーニングを開始したジム名

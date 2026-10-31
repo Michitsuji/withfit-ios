@@ -251,8 +251,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 let gymName = payload["gymName"] as? String ?? "ジム"
                 let exerciseName = payload["exerciseName"] as? String ?? ""
                 let exerciseCount = payload["exerciseCount"] as? Int ?? 0
-                let completedSets = payload["completedSets"] as? Int ?? 0
-                let totalSets = payload["totalSets"] as? Int ?? 0
+                let exerciseIndex = payload["exerciseIndex"] as? Int ?? -1
                 let startDate: Date?
                 if let startMs = payload["trainingStartTime"] as? Double, startMs > 0 {
                     startDate = Date(timeIntervalSince1970: startMs / 1000.0)
@@ -265,8 +264,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                     gymName: gymName,
                     exerciseName: exerciseName,
                     exerciseCount: exerciseCount,
-                    completedSets: completedSets,
-                    totalSets: totalSets
+                    exerciseIndex: exerciseIndex
                 )
             }
 
