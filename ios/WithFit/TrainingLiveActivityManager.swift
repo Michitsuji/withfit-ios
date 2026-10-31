@@ -112,7 +112,8 @@ final class TrainingLiveActivityManager {
                 update(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
             }
         } else {
-            end()
+            // トレーニング終了時はロック画面から即座に消す（デフォルトポリシーだと残像が残るため）
+            end(dismissNow: true)
         }
     }
 }

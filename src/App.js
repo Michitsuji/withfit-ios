@@ -122,6 +122,7 @@ export default function App() {
   const hasRefreshedTokenForUser = useRef(null);
   // ログアウト直後に残っているFirebase認証セッションで自動再ログインしないためのガード
   const suppressAutoLoginRef = useRef(false);
+  const prevIsTrainingRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
   const shownToastIdsRef = useRef(new Set((boot.notifications || []).map(n => n.id)));
   const toastTimerRef = useRef(null);
@@ -1835,6 +1836,16 @@ export default function App() {
       : null;
     setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName, myInfo?.currentExerciseName || '', exerciseIndex, currentSet, rest);
   }, [myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.currentGymId, myInfo?.currentExerciseName, draftWorkoutItems, restTimerStart, restDuration, isAlarmRinging, allGyms]);
+
+  // トレーニングを終了したら、レストタイマーも必ずリセットする
+  // （終了後にレスト表示やタイマー通知が残らないように）
+  useEffect(() => {
+    const nowTraining = Boolean(myInfo?.isTraining);
+    if (prevIsTrainingRef.current && !nowTraining && restTimerStart) {
+      cancelRestTimer();
+    }
+    prevIsTrainingRef.current = nowTraining;
+  }, [myInfo?.isTraining, restTimerStart]);
 
   useEffect(() => {
     syncNativeTheme(myInfo?.theme || 'light');

@@ -96,7 +96,14 @@ final class NativeAudioAndTimerManager {
     // MARK: - Background Keep-Alive (バックグラウンド・画面ロック中のリアルタイム通知＆タイマー維持)
     func setTrainingState(isTraining: Bool) {
         isTrainingActive = isTraining
-        startSilentKeepAliveIfNeeded()
+        if isTraining {
+            startSilentKeepAliveIfNeeded()
+        } else {
+            // トレーニング終了時は、レスト終了通知・記録忘れ通知の予約を必ず取り消す
+            // （終了後にタイマー通知だけが鳴る事故を防ぐ）
+            cancelRestTimer()
+            cancelForgotTimer()
+        }
     }
 
     func startSilentKeepAliveIfNeeded() {
