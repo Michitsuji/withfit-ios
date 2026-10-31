@@ -242,7 +242,9 @@ function ProfileModal({
           <input type="text" value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl p-3 text-base text-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500" style={{ fontSize: '16px' }} />
         </div>
         <div className="mb-6 space-y-3">
-          {userInfo?.googleUid ? (
+          {!userInfo?.displayName ? (
+             <p className="text-sm text-slate-500 font-bold bg-slate-50 dark:bg-slate-900 p-3 rounded-xl text-center border border-slate-200 dark:border-slate-700">アカウント情報を読み込み中…</p>
+          ) : userInfo?.googleUid ? (
              <p className="text-sm text-emerald-600 font-bold bg-emerald-50 p-3 rounded-xl text-center border border-emerald-200">✓ Googleアカウント連携済み</p>
           ) : (
              <button onClick={onLinkGoogle} className="w-full bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-xl shadow-sm flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors">

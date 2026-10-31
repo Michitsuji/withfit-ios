@@ -250,8 +250,18 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             if #available(iOS 16.1, *) {
                 let gymName = payload["gymName"] as? String ?? "ジム"
                 let exerciseName = payload["exerciseName"] as? String ?? ""
-                let exerciseCount = payload["exerciseCount"] as? Int ?? 0
                 let exerciseIndex = payload["exerciseIndex"] as? Int ?? -1
+                let currentSet = payload["currentSet"] as? Int ?? 0
+                let restRinging = payload["restRinging"] as? Bool ?? false
+                var restStartedAt: Date? = nil
+                var restEndsAt: Date? = nil
+                if let restStartMs = payload["restStartTime"] as? Double, restStartMs > 0 {
+                    restStartedAt = Date(timeIntervalSince1970: restStartMs / 1000.0)
+                    let restDurationSec = payload["restDurationSec"] as? Int ?? 0
+                    if restDurationSec > 0 {
+                        restEndsAt = restStartedAt?.addingTimeInterval(TimeInterval(restDurationSec))
+                    }
+                }
                 let startDate: Date?
                 if let startMs = payload["trainingStartTime"] as? Double, startMs > 0 {
                     startDate = Date(timeIntervalSince1970: startMs / 1000.0)
@@ -263,8 +273,11 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                     startTime: startDate,
                     gymName: gymName,
                     exerciseName: exerciseName,
-                    exerciseCount: exerciseCount,
-                    exerciseIndex: exerciseIndex
+                    exerciseIndex: exerciseIndex,
+                    currentSet: currentSet,
+                    restStartedAt: restStartedAt,
+                    restEndsAt: restRinging ? nil : restEndsAt,
+                    restRinging: restRinging
                 )
             }
 
@@ -373,6 +386,22 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             "type": "PUSH_TOKEN",
             "token": token
         ])
+    }
+
+    /// ロック画面の Live Activity ボタンでレストタイマーが変更されたとき、
+    /// 記録画面（Web）のタイマー表示を合わせるための同期メッセージ
+    func sendRestTimerSyncToWeb(endsAtMs: Double?) {
+        if let endsAtMs = endsAtMs {
+            sendToWeb(payload: [
+                "type": "REST_TIMER_SYNC",
+                "endsAt": endsAtMs
+            ])
+        } else {
+            sendToWeb(payload: [
+                "type": "REST_TIMER_SYNC",
+                "endsAt": NSNull()
+            ])
+        }
     }
 
     func sendNotificationClickToWeb(type: String, postId: String) {

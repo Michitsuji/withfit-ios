@@ -18,25 +18,32 @@ final class TrainingLiveActivityManager {
 
     private init() {}
 
+    private func makeState(exerciseName: String, exerciseIndex: Int, currentSet: Int, restStartedAt: Date?, restEndsAt: Date?, restRinging: Bool) -> TrainingActivityAttributes.ContentState {
+        TrainingActivityAttributes.ContentState(
+            exerciseName: exerciseName,
+            exerciseIndex: exerciseIndex,
+            currentSet: currentSet,
+            restStartedAt: restStartedAt,
+            restEndsAt: restEndsAt,
+            restRinging: restRinging
+        )
+    }
+
     /// トレーニング開始時に呼ぶ。既に同じ開始時刻の Activity があれば更新に回す
-    func start(startTime: Date, gymName: String, exerciseName: String, exerciseCount: Int, exerciseIndex: Int) {
+    func start(startTime: Date, gymName: String, exerciseName: String, exerciseIndex: Int, currentSet: Int, restStartedAt: Date?, restEndsAt: Date?, restRinging: Bool) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             print("[WithFit LiveActivity] Live Activities are not enabled")
             return
         }
-        if let existing = activity, currentStartTime == startTime {
-            update(exerciseName: exerciseName, exerciseCount: exerciseCount, exerciseIndex: exerciseIndex)
+        if let _ = activity, currentStartTime == startTime {
+            update(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
             return
         }
         // 開始時刻が違う古い Activity が残っていたら終了してから作り直す
         end(dismissNow: true)
 
         let attributes = TrainingActivityAttributes(gymName: gymName, startTime: startTime)
-        let initialState = TrainingActivityAttributes.ContentState(
-            exerciseName: exerciseName,
-            exerciseCount: exerciseCount,
-            exerciseIndex: exerciseIndex
-        )
+        let initialState = makeState(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
         do {
             if #available(iOS 16.2, *) {
                 activity = try Activity.request(
@@ -56,14 +63,10 @@ final class TrainingLiveActivityManager {
         }
     }
 
-    /// 種目名・種目数の変化時に呼ぶ
-    func update(exerciseName: String, exerciseCount: Int, exerciseIndex: Int) {
+    /// 種目・セット・レスト状態の変化時に呼ぶ
+    func update(exerciseName: String, exerciseIndex: Int, currentSet: Int, restStartedAt: Date?, restEndsAt: Date?, restRinging: Bool) {
         guard let activity = activity else { return }
-        let state = TrainingActivityAttributes.ContentState(
-            exerciseName: exerciseName,
-            exerciseCount: exerciseCount,
-            exerciseIndex: exerciseIndex
-        )
+        let state = makeState(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
         lastState = state
         Task {
             if #available(iOS 16.2, *) {
@@ -85,11 +88,7 @@ final class TrainingLiveActivityManager {
         currentStartTime = nil
         // Activity.content は iOS 16.2+ のAPIなので、16.1 でも使えるよう
         // 最後に送った状態を自前で保持して使い回す
-        let finalState = lastState ?? TrainingActivityAttributes.ContentState(
-            exerciseName: "",
-            exerciseCount: 0,
-            exerciseIndex: -1
-        )
+        let finalState = lastState ?? makeState(exerciseName: "", exerciseIndex: -1, currentSet: 0, restStartedAt: nil, restEndsAt: nil, restRinging: false)
         lastState = nil
         Task {
             if #available(iOS 16.2, *) {
@@ -104,13 +103,13 @@ final class TrainingLiveActivityManager {
     }
 
     /// SET_TRAINING_STATE ブリッジの受け口。状態に応じて開始/更新/終了を振り分ける
-    func syncTrainingState(isTraining: Bool, startTime: Date?, gymName: String, exerciseName: String, exerciseCount: Int, exerciseIndex: Int) {
+    func syncTrainingState(isTraining: Bool, startTime: Date?, gymName: String, exerciseName: String, exerciseIndex: Int, currentSet: Int, restStartedAt: Date?, restEndsAt: Date?, restRinging: Bool) {
         if isTraining {
             let startedAt = startTime ?? currentStartTime ?? Date()
             if activity == nil || currentStartTime != startedAt {
-                start(startTime: startedAt, gymName: gymName, exerciseName: exerciseName, exerciseCount: exerciseCount, exerciseIndex: exerciseIndex)
+                start(startTime: startedAt, gymName: gymName, exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
             } else {
-                update(exerciseName: exerciseName, exerciseCount: exerciseCount, exerciseIndex: exerciseIndex)
+                update(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
             }
         } else {
             end()

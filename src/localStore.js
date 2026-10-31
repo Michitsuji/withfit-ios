@@ -44,7 +44,11 @@ export function saveLocalDB(userId = 'global', dbData) {
   try {
     const payload = {
       ...dbData,
-      savedAt: Date.now()
+      savedAt: Date.now(),
+      // セッション情報も DB 本体に埋め込む。
+      // localStorage 側のセッションが iOS に消去されても、
+      // ネイティブ保存された DB から userId を復元できるようにするため。
+      session: { userId, lastActive: Date.now() }
     };
     const serialized = JSON.stringify(payload);
     localStorage.setItem(`${LOCAL_DB_PREFIX}${userId}`, serialized);
@@ -56,6 +60,30 @@ export function saveLocalDB(userId = 'global', dbData) {
     });
   } catch (e) {
     console.warn('Failed to save local DB:', e);
+  }
+}
+
+// localStorage のログインセッションが消えてしまった場合に、
+// ネイティブ保存 DB（window.__WITHFIT_NATIVE_DB__）からセッションを復元する。
+// DB は { [userId]: dbData } 形式で、各 dbData に session が埋め込まれている。
+export function recoverSessionFromNativeDB() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const nativeDB = window.__WITHFIT_NATIVE_DB__;
+    if (!nativeDB || typeof nativeDB !== 'object') return null;
+    let best = null;
+    Object.entries(nativeDB).forEach(([userId, dbData]) => {
+      if (!dbData || typeof dbData !== 'object') return;
+      const lastActive = dbData.session?.lastActive || dbData.savedAt || 0;
+      if (!lastActive) return;
+      if (Date.now() - lastActive > 30 * 24 * 60 * 60 * 1000) return;
+      if (!best || lastActive > best.lastActive) {
+        best = { userId, lastActive };
+      }
+    });
+    return best;
+  } catch (e) {
+    return null;
   }
 }
 

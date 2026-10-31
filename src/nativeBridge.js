@@ -105,15 +105,18 @@ export function cancelNativeStartTimer() {
 }
 
 // トレーニング中状態の同期（iOSバックグラウンド維持・無音オーディオセッション制御＋Live Activity）
-export function setNativeTrainingState(isTraining, trainingStartTime = null, gymName = '', exerciseName = '', exerciseCount = 0, exerciseIndex = -1) {
+export function setNativeTrainingState(isTraining, trainingStartTime = null, gymName = '', exerciseName = '', exerciseIndex = -1, currentSet = 0, rest = null) {
   postNativeMessage({
     type: 'SET_TRAINING_STATE',
     isTraining: Boolean(isTraining),
     trainingStartTime: trainingStartTime || null,
     gymName: gymName || '',
     exerciseName: exerciseName || '',
-    exerciseCount: Number(exerciseCount) || 0,
-    exerciseIndex: Number.isFinite(Number(exerciseIndex)) ? Number(exerciseIndex) : -1
+    exerciseIndex: Number.isFinite(Number(exerciseIndex)) ? Number(exerciseIndex) : -1,
+    currentSet: Number(currentSet) || 0,
+    restStartTime: rest?.startTime || null,
+    restDurationSec: Number(rest?.durationSec) || 0,
+    restRinging: Boolean(rest?.ringing)
   });
 }
 

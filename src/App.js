@@ -17,7 +17,7 @@ import { ExercisesView } from './ExercisesView';
 import { FriendsView, FriendDetailModal } from './FriendsView';
 import { LoginScreen, ProfileModal, UserProfileModal } from './ProfileModals';
 import { SecretGame } from './CoachAndGame';
-import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap } from './localStore';
+import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap, recoverSessionFromNativeDB } from './localStore';
 import {
   isNativeIosApp,
   postNativeMessage,
@@ -51,10 +51,37 @@ function getInitialBootState() {
         }
       }
     } catch (e) {}
+    // localStorage のセッションが iOS に消去されていた場合の保険:
+    // ネイティブ保存 DB からセッションを復元し、localStorage へ自己修復する。
+    // （セッション喪失＝ログアウト＆プロフィール消失に見える事故の根本対策）
+    if (!userId) {
+      const recovered = recoverSessionFromNativeDB();
+      if (recovered) {
+        userId = recovered.userId;
+        try {
+          localStorage.setItem('withfit_login_session', JSON.stringify({ userId: recovered.userId, lastActive: recovered.lastActive }));
+        } catch (e) {}
+      }
+    }
   }
 
   const cached = userId ? loadLocalDB(userId) : null;
   const hasCached = Boolean(cached && typeof cached === 'object');
+
+  const bootAccountsInfo = (hasCached && cached.accountsInfo) ? { ...cached.accountsInfo } : {};
+  // キャッシュ DB に自分のプロフィールが欠けている場合は、軽量バックアップから補完する
+  // （サーバーのスナップショットが届くまでの間、プロフィールが消えて見えるのを防ぐ）
+  if (userId && !bootAccountsInfo[userId] && typeof window !== 'undefined') {
+    try {
+      const backupStr = localStorage.getItem(`withfit_profile_backup_${userId}`);
+      if (backupStr) {
+        const backup = JSON.parse(backupStr);
+        if (backup && typeof backup === 'object' && backup.displayName) {
+          bootAccountsInfo[userId] = backup;
+        }
+      }
+    } catch (e) {}
+  }
 
   let draftItems = [];
   let draftCats = [];
@@ -70,7 +97,7 @@ function getInitialBootState() {
   return {
     userId,
     hasCached,
-    accountsInfo: (hasCached && cached.accountsInfo) ? cached.accountsInfo : {},
+    accountsInfo: bootAccountsInfo,
     gyms: (hasCached && Array.isArray(cached.gyms)) ? cached.gyms : [],
     exercises: (hasCached && Array.isArray(cached.exercises)) ? cached.exercises : [],
     posts: (hasCached && Array.isArray(cached.posts)) ? cached.posts : [],
@@ -226,6 +253,23 @@ export default function App() {
           }
         } else if (data.type === 'PUSH_PERMISSION_STATUS') {
           setOsPermission(prev => prev !== data.status ? data.status : prev);
+        } else if (data.type === 'REST_TIMER_SYNC') {
+          // ロック画面（Live Activity）のボタンで変更されたレストタイマーを記録画面へ反映
+          const endsAt = typeof data.endsAt === 'number' && data.endsAt > 0 ? data.endsAt : null;
+          if (!endsAt) {
+            setIsAlarmRinging(false);
+            setRestTimerStart(null);
+            setRestDuration(0);
+            setRestTimeLeft(0);
+          } else {
+            setIsAlarmRinging(false);
+            setRestTimerStart(prev => {
+              const start = prev ?? Date.now();
+              setRestDuration(Math.max(1, Math.round((endsAt - start) / 1000)));
+              return start;
+            });
+            setRestTimeLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+          }
         } else if (data.type === 'NATIVE_GOOGLE_LOGIN' && data.idToken) {
           const credential = GoogleAuthProvider.credential(data.idToken);
           signInWithCredential(auth, credential).catch(err => console.error("Native login error:", err));
@@ -1001,14 +1045,21 @@ export default function App() {
       }
     }).catch(console.error);
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (!isMounted) return;
       if (user) {
         setFirebaseUser(user);
       } else {
-        try {
-          await signInAnonymously(auth);
-        } catch (e) {}
+        // 永続化された Google セッションの復元が遅れているだけの可能性があるため、
+        // 即座に匿名ログインしない。匿名ログインが復元より先に走ると
+        // セッションを上書きし「Google連携が切れた」状態に見える事故になる。
+        // 少し待って、それでも未ログインの場合のみ匿名ログインする。
+        setTimeout(() => {
+          if (!isMounted) return;
+          if (!auth.currentUser) {
+            signInAnonymously(auth).catch(() => {});
+          }
+        }, 1500);
       }
     });
     return () => {
@@ -1045,6 +1096,18 @@ export default function App() {
       setDataLoaded({ accounts: true, gyms: true, exercises: true, workouts: true });
     }
   }, [currentUser]);
+
+  // 自分のプロフィールの軽量バックアップ（起動時の表示保険）。
+  // キャッシュ DB が読めなかった起動でも、プロフィールが消えて見えないようにする。
+  useEffect(() => {
+    if (!currentUser) return;
+    const mine = accountsInfo[currentUser];
+    if (mine && mine.displayName) {
+      try {
+        localStorage.setItem(`withfit_profile_backup_${currentUser}`, JSON.stringify(mine));
+      } catch (e) {}
+    }
+  }, [currentUser, accountsInfo]);
 
   const persistLocalSnapshot = useCallback((partial = {}, diffCounts = null) => {
     if (!currentUser) return;
@@ -1774,10 +1837,21 @@ export default function App() {
   useEffect(() => {
     const gymName = allGyms.find(g => g.id === myInfo?.currentGymId)?.name || 'ジム';
     const namedItems = (draftWorkoutItems || []).filter(i => i.exerciseName);
-    const exerciseCount = namedItems.length;
     const exerciseIndex = namedItems.findIndex(i => i.exerciseName === myInfo?.currentExerciseName);
-    setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName, myInfo?.currentExerciseName || '', exerciseCount, exerciseIndex);
-  }, [myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.currentGymId, myInfo?.currentExerciseName, draftWorkoutItems, allGyms]);
+    const currentItem = exerciseIndex >= 0 ? namedItems[exerciseIndex] : null;
+    // 実施中セットの推定: 入力がまだ空の最初のセットを「いまのセット」とする（全部入力済みなら最終セット）
+    let currentSet = 0;
+    const sets = currentItem?.sets || [];
+    if (sets.length > 0) {
+      const isBlank = (s) => !s.weight && !s.reps && !s.lReps && !s.rReps && !s.superWeight && !s.superReps && !s.superLReps && !s.superRReps && !s.superWeight3 && !s.superReps3 && !s.superLReps3 && !s.superRReps3;
+      const firstBlank = sets.findIndex(isBlank);
+      currentSet = firstBlank === -1 ? sets.length : firstBlank + 1;
+    }
+    const rest = restTimerStart
+      ? { startTime: restTimerStart, durationSec: restDuration || 0, ringing: isAlarmRinging }
+      : null;
+    setNativeTrainingState(Boolean(myInfo?.isTraining), myInfo?.trainingStartTime, gymName, myInfo?.currentExerciseName || '', exerciseIndex, currentSet, rest);
+  }, [myInfo?.isTraining, myInfo?.trainingStartTime, myInfo?.currentGymId, myInfo?.currentExerciseName, draftWorkoutItems, restTimerStart, restDuration, isAlarmRinging, allGyms]);
 
   useEffect(() => {
     syncNativeTheme(myInfo?.theme || 'light');
@@ -2831,7 +2905,7 @@ export default function App() {
       )}
 
       <main className={`px-4 pb-48 max-w-md mx-auto w-full ${myInfo?.isTraining && timerState.y === 'top' ? (activeFriends.length > 0 ? 'pt-52' : 'pt-44') : (activeFriends.length > 0 ? 'pt-32' : 'pt-24')}`}>
-        {!myInfo?.googleUid && (
+        {currentUser && myInfo?.displayName && !myInfo?.googleUid && (
           <div className="bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 px-4 py-3 rounded-2xl border border-rose-200 dark:border-rose-900/60 font-bold text-xs mb-6 flex justify-between items-center shadow-sm">
              <div className="flex items-center gap-1.5 min-w-0">
                 <Lock size={14} className="shrink-0" />
