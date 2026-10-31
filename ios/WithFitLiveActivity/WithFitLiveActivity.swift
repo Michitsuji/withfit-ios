@@ -10,7 +10,7 @@ import ActivityKit
 // デザイン方針:
 // - メインは2つのタイマー（記録時間／レスト）を大きく並べる
 // - 種目・セットは「総数」ではなく「何種目目・何セット目」だけ表示
-// - ロック画面からレストタイマーを操作できるボタン付き（iOS 17+）
+// - 操作ボタンは付けない（表示専用）。レスト終了は通知で知らせる
 // ==========================================
 
 private let accent = Color(red: 0.063, green: 0.725, blue: 0.506) // #10B981
@@ -54,7 +54,7 @@ private struct DumbbellBadge: View {
 @available(iOS 16.1, *)
 private struct RestTimerValue: View {
     let state: TrainingActivityAttributes.ContentState
-    var fontSize: CGFloat = 28
+    var fontSize: CGFloat = 26
 
     var body: some View {
         if state.restRinging {
@@ -85,43 +85,12 @@ private struct RestTimerValue: View {
     }
 }
 
-/// ロック画面のレスト操作ボタン（iOS 17+ の対話型 Live Activity）
-@available(iOS 17.0, *)
-private struct RestControlButtons: View {
-    let state: TrainingActivityAttributes.ContentState
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if state.restEndsAt != nil && !state.restRinging {
-                Button(intent: ExtendRestTimerIntent()) {
-                    Text("+30秒")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 15)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
-                }
-            }
-            Button(intent: StopRestTimerIntent()) {
-                Text(state.restRinging ? "アラーム停止" : "レスト停止")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(state.restRinging ? .red : .white)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.white.opacity(0.14)))
-            }
-            Spacer()
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 @available(iOS 16.1, *)
 struct TrainingLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TrainingActivityAttributes.self) { context in
             // ===== ロック画面 / バナー表示 =====
-            VStack(alignment: .leading, spacing: 11) {
+            VStack(alignment: .leading, spacing: 9) {
                 // ヘッダー: バッジ＋状態ラベル / ジム名
                 HStack(spacing: 7) {
                     DumbbellBadge(size: 22)
@@ -150,7 +119,7 @@ struct TrainingLiveActivityWidget: Widget {
                             .foregroundColor(accent)
                     }
                     Text(context.state.exerciseName.isEmpty ? "種目を選択してください" : context.state.exerciseName)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.system(size: 19, weight: .bold))
                         .foregroundColor(context.state.exerciseName.isEmpty ? .white.opacity(0.45) : .white)
                         .lineLimit(1)
                 }
@@ -166,7 +135,7 @@ struct TrainingLiveActivityWidget: Widget {
                             .tracking(1.0)
                             .foregroundColor(.white.opacity(0.5))
                         Text(context.attributes.startTime, style: .timer)
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .font(.system(size: 26, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .foregroundColor(.white)
                     }
@@ -186,15 +155,9 @@ struct TrainingLiveActivityWidget: Widget {
                     Spacer()
                 }
 
-                // ロック画面からのレスト操作（iOS 17+）
-                if #available(iOS 17.0, *) {
-                    if context.state.restStartedAt != nil || context.state.restRinging {
-                        RestControlButtons(state: context.state)
-                    }
-                }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 12)
             .activityBackgroundTint(panelBackground)
             .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in

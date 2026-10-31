@@ -253,23 +253,6 @@ export default function App() {
           }
         } else if (data.type === 'PUSH_PERMISSION_STATUS') {
           setOsPermission(prev => prev !== data.status ? data.status : prev);
-        } else if (data.type === 'REST_TIMER_SYNC') {
-          // ロック画面（Live Activity）のボタンで変更されたレストタイマーを記録画面へ反映
-          const endsAt = typeof data.endsAt === 'number' && data.endsAt > 0 ? data.endsAt : null;
-          if (!endsAt) {
-            setIsAlarmRinging(false);
-            setRestTimerStart(null);
-            setRestDuration(0);
-            setRestTimeLeft(0);
-          } else {
-            setIsAlarmRinging(false);
-            setRestTimerStart(prev => {
-              const start = prev ?? Date.now();
-              setRestDuration(Math.max(1, Math.round((endsAt - start) / 1000)));
-              return start;
-            });
-            setRestTimeLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
-          }
         } else if (data.type === 'NATIVE_GOOGLE_LOGIN' && data.idToken) {
           const credential = GoogleAuthProvider.credential(data.idToken);
           signInWithCredential(auth, credential).catch(err => console.error("Native login error:", err));

@@ -1208,13 +1208,6 @@ function RecordView({ onStart, onPost, onCancel, onRequestJointTraining, onAccep
       <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
         <h2 className="text-lg font-bold text-slate-900 dark:text-white">{isManual ? '過去の記録入力' : (myInfo?.isTraining ? 'ワークアウト中' : 'トレーニング準備中')}</h2>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => { triggerHaptic('selection'); setShowDashboard(true); }}
-            className="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50/90 dark:bg-indigo-950/60 px-3 py-1.5 rounded-xl border border-indigo-200/80 dark:border-indigo-800/80 flex items-center gap-1 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors shadow-sm"
-          >
-            <Target size={14} /> プログラム管理
-          </button>
           {workoutItems.length > 1 && (
             <button onClick={() => setShowReorderModal(true)} className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50/90 dark:bg-emerald-950/60 px-3 py-1.5 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 flex items-center gap-1 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors shadow-sm">
               <ArrowUp size={14} /><ArrowDown size={14} className="-ml-2" /> 並び替え

@@ -20,8 +20,6 @@
 		B10000030000000000000001 /* TrainingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000010000000000000001 /* TrainingActivityAttributes.swift */; };
 		B10000040000000000000001 /* WithFitLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000030000000000000001 /* WithFitLiveActivity.swift */; };
 		B10000050000000000000001 /* WithFitLiveActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* WithFitLiveActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		B10000060000000000000001 /* RestTimerIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000050000000000000001 /* RestTimerIntents.swift */; };
-		B10000070000000000000001 /* RestTimerIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000050000000000000001 /* RestTimerIntents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,7 +38,6 @@
 		B20000020000000000000001 /* TrainingLiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingLiveActivityManager.swift; sourceTree = "<group>"; };
 		B20000030000000000000001 /* WithFitLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WithFitLiveActivity.swift; sourceTree = "<group>"; };
 		B20000040000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B20000050000000000000001 /* RestTimerIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestTimerIntents.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,7 +77,6 @@
 				A20000050000000000000001 /* NativeAudioAndTimerManager.swift */,
 				B20000010000000000000001 /* TrainingActivityAttributes.swift */,
 				B20000020000000000000001 /* TrainingLiveActivityManager.swift */,
-				B20000050000000000000001 /* RestTimerIntents.swift */,
 				A20000060000000000000001 /* Assets.xcassets */,
 				A20000070000000000000001 /* WebBundle */,
 				A20000080000000000000001 /* alarm.mp3 */,
@@ -208,7 +204,6 @@
 				A10000050000000000000001 /* NativeAudioAndTimerManager.swift in Sources */,
 				B10000010000000000000001 /* TrainingActivityAttributes.swift in Sources */,
 				B10000020000000000000001 /* TrainingLiveActivityManager.swift in Sources */,
-				B10000060000000000000001 /* RestTimerIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -218,7 +213,6 @@
 			files = (
 				B10000040000000000000001 /* WithFitLiveActivity.swift in Sources */,
 				B10000030000000000000001 /* TrainingActivityAttributes.swift in Sources */,
-				B10000070000000000000001 /* RestTimerIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

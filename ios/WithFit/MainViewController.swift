@@ -388,21 +388,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         ])
     }
 
-    /// ロック画面の Live Activity ボタンでレストタイマーが変更されたとき、
-    /// 記録画面（Web）のタイマー表示を合わせるための同期メッセージ
-    func sendRestTimerSyncToWeb(endsAtMs: Double?) {
-        if let endsAtMs = endsAtMs {
-            sendToWeb(payload: [
-                "type": "REST_TIMER_SYNC",
-                "endsAt": endsAtMs
-            ])
-        } else {
-            sendToWeb(payload: [
-                "type": "REST_TIMER_SYNC",
-                "endsAt": NSNull()
-            ])
-        }
-    }
 
     func sendNotificationClickToWeb(type: String, postId: String) {
         sendToWeb(payload: [

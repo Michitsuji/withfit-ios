@@ -44,7 +44,6 @@ targets:
         excludes:
           - "Info.plist"
       - path: WithFit/TrainingActivityAttributes.swift
-      - path: WithFit/RestTimerIntents.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.michitsuji.withfit.liveactivity

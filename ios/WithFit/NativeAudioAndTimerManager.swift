@@ -16,46 +16,7 @@ final class NativeAudioAndTimerManager {
     private let restTimerNotifId = "withfit_rest_timer"
     private let forgotTimerNotifId = "withfit_forgot_timer"
 
-    private init() {
-        observeRestTimerOverrides()
-    }
-
-    // MARK: - Live Activity ボタンからのレスト操作（Darwin通知で受け取る）
-    private func observeRestTimerOverrides() {
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            nil,
-            { _, _, _, _, _ in
-                DispatchQueue.main.async {
-                    NativeAudioAndTimerManager.shared.handleRestTimerOverride()
-                }
-            },
-            "com.michitsuji.withfit.restTimerOverrideChanged" as CFString,
-            nil,
-            .deliverImmediately
-        )
-    }
-
-    /// ロック画面で「+30秒」「停止」が押されたときの実処理。
-    /// アラーム通知（UNNotification）の再スケジュールと記録画面への同期を行うため、
-    /// スリープ中でも終了音は必ず通知として鳴る。
-    func handleRestTimerOverride() {
-        let defaults = UserDefaults.standard
-        guard defaults.bool(forKey: "withfit.restOverrideActive") else { return }
-        defaults.set(false, forKey: "withfit.restOverrideActive")
-
-        let endsAtMs = defaults.double(forKey: "withfit.restEndsAtOverride")
-        if endsAtMs > 0 {
-            let remaining = Int(((endsAtMs / 1000) - Date().timeIntervalSince1970).rounded(.up))
-            if remaining > 0 {
-                scheduleRestTimer(seconds: remaining)
-            }
-            MainViewController.shared?.sendRestTimerSyncToWeb(endsAtMs: endsAtMs)
-        } else {
-            cancelRestTimer()
-            MainViewController.shared?.sendRestTimerSyncToWeb(endsAtMs: nil)
-        }
-    }
+    private init() {}
 
     /// Spotify / Apple Music 等の他アプリの音楽再生を一切止めないオーディオセッション設定
     func configureAudioSession(duckOthers: Bool = false) {

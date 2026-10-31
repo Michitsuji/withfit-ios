@@ -919,7 +919,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
     );
   };
 
-  const isConfirmed = item.isConfirmed;
+  const isConfirmed = false; // 「種目を確定する」機能は廃止（常時編集モード）
 
   return (
     <div {...dragHandleProps} className={`${isConfirmed ? 'bg-emerald-50/30 dark:bg-emerald-950/20 border-2 border-emerald-400 dark:border-emerald-600' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800'} rounded-2xl p-4 shadow-sm relative w-full overflow-visible mb-6 transition-all duration-200 ${isDragging ? 'cursor-grabbing' : 'cursor-auto'}`} onClickCapture={() => onActive && onActive(item.exerciseName)}>
@@ -1059,7 +1059,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
             onDragLeave={handleDragLeave}
             onDrop={(e) => handleDrop(e, sIndex)}
             onDragEnd={handleDragEnd}
-            className={`bg-slate-50/50 dark:bg-slate-950/50 p-2 rounded-xl border transition-all relative ${draggedSetIndex === sIndex ? (dragOverSetIndex === sIndex ? 'opacity-70 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'opacity-40 border-dashed border-slate-300 dark:border-slate-600') : 'border-slate-100 dark:border-slate-800'} ${draggedSetIndex !== null ? 'space-y-0' : 'space-y-2'} ${set.done ? 'border-emerald-400 dark:border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/40' : ''}`}
+            className={`bg-slate-50/50 dark:bg-slate-950/50 p-2 rounded-xl border transition-all relative ${draggedSetIndex === sIndex ? (dragOverSetIndex === sIndex ? 'opacity-70 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'opacity-40 border-dashed border-slate-300 dark:border-slate-600') : 'border-slate-100 dark:border-slate-800'} ${draggedSetIndex !== null ? 'space-y-0' : 'space-y-2'}`}
           >
             {dragOverSetIndex === sIndex && draggedSetIndex !== sIndex && <div className={`absolute left-0 w-full h-1 bg-emerald-500 rounded-full z-10 shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse ${draggedSetIndex < dragOverSetIndex ? '-bottom-1.5' : '-top-1.5'}`} />}
             <div className="flex items-center gap-1.5">
@@ -1081,7 +1081,6 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
               ) : (
                 <>
                   {renderInputRow(set, item.weightType, 'main', false)}
-                  {!isJointPartner && <button onClick={() => updateSet(item.id, set.id, 'done', !set.done)} className={`w-7 flex-shrink-0 flex justify-center transition-colors ${set.done ? 'text-emerald-500' : 'text-slate-300 dark:text-slate-600 hover:text-emerald-400'}`} title="セット完了"><CheckCircle size={22} /></button>}
                   {!isJointPartner && <button onClick={() => removeSet(item.id, set.id)} disabled={item.sets.length === 1} className="w-6 flex-shrink-0 text-slate-400 hover:text-rose-500 disabled:opacity-30 flex justify-center"><X size={18} /></button>}
                 </>
               )}
@@ -1181,51 +1180,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
       </div>
       </div>
       
-      {!isJointPartner && (
-      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
-        <button
-          onClick={() => {
-            if (!item.isConfirmed) {
-              if (!item.exerciseName) {
-                alert("種目を選択してください。");
-                return;
-              }
-              const isCardio = item.weightType === 'cardio';
-              const isLR = item.weightType === 'lr';
-              const isBodyWeight = item.weightType === 'bodyWeight';
-              
-              for (let i = 0; i < item.sets.length; i++) {
-                const set = item.sets[i];
-                if (isCardio) {
-                  if (!set.distance && !set.time && !set.calories) {
-                    alert(`セット${i + 1}の入力が不十分です（距離、時間、カロリーのいずれかを入力してください）。`);
-                    return;
-                  }
-                } else if (isLR) {
-                  if ((set.weight === '' && !isBodyWeight) || (set.lReps === '' && set.rReps === '')) {
-                    alert(`セット${i + 1}の入力が不十分です（重量と左右どちらかの回数を入力してください）。`);
-                    return;
-                  }
-                } else {
-                  if ((set.weight === '' && !isBodyWeight) || set.reps === '') {
-                    alert(`セット${i + 1}の入力が不十分です（重量と回数を入力してください）。`);
-                    return;
-                  }
-                }
-              }
-            }
-            updateItem(item.id, { isConfirmed: !item.isConfirmed });
-          }}
-          className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors ${
-            isConfirmed
-              ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
-              : 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-200 dark:hover:bg-emerald-800/60'
-          }`}
-        >
-          {isConfirmed ? <><Edit2 size={18} /> 編集に戻す</> : <><CheckCircle size={18} /> この種目を確定する</>}
-        </button>
-      </div>
-      )}
+
 
       </div>
     </div>
