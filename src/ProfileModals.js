@@ -2,7 +2,7 @@
 // ProfileModals.js — ログイン画面・プロフィール設定・ユーザープロフィールモーダル
 // ==========================================
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Activity, PlusCircle, Trash2, Settings, Sun, Moon, Droplet, Sparkles, AlertTriangle, Users, UserPlus, ChevronLeft, Bell, CheckCircle, RefreshCw, Send } from 'lucide-react';
+import { X, Activity, PlusCircle, Trash2, Settings, Sun, Sparkles, AlertTriangle, Users, UserPlus, ChevronLeft, Bell, CheckCircle, RefreshCw, Send } from 'lucide-react';
 import { GoogleAuthProvider, signInWithRedirect, getAuth, signInWithPopup } from 'firebase/auth';
 import { UserAvatar, ToggleSwitch, WithFitLogo } from './CommonUI';
 
@@ -24,7 +24,7 @@ function ProfileModal({
   const [isPushBusy, setIsPushBusy] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [goal, setGoal] = useState(userInfo?.goal || '');
-  const [theme, setTheme] = useState(userInfo?.theme || 'light');
+  const [theme, setTheme] = useState(userInfo?.theme === 'pop' ? 'pop' : 'light');
   const [photoUrl, setPhotoUrl] = useState(userInfo?.photoUrl || null);
   const [userColor, setUserColor] = useState(userInfo?.userColor || '#10b981');
   
@@ -78,7 +78,7 @@ function ProfileModal({
   useEffect(() => {
     if (isOpen) {
       setGoal(userInfo?.goal || '');
-      setTheme(userInfo?.theme || 'light');
+      setTheme(userInfo?.theme === 'pop' ? 'pop' : 'light');
       setPhotoUrl(userInfo?.photoUrl || null);
       setUserColor(userInfo?.userColor || '#10b981');
       setBirthDate(userInfo?.birthDate || '');
@@ -425,8 +425,6 @@ function ProfileModal({
              <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">テーマ設定</label>
              <div className="grid grid-cols-2 gap-2 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
                <button onClick={() => setTheme('light')} className={`flex items-center justify-center gap-2 py-2.5 text-sm font-bold rounded-lg transition-colors ${theme === 'light' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}><Sun size={16}/> ライト</button>
-               <button onClick={() => setTheme('dark')} className={`flex items-center justify-center gap-2 py-2.5 text-sm font-bold rounded-lg transition-colors ${theme === 'dark' ? 'bg-slate-900 dark:bg-slate-950 text-emerald-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}><Moon size={16}/> ダーク</button>
-               <button onClick={() => setTheme('ocean')} className={`flex items-center justify-center gap-2 py-2.5 text-sm font-bold rounded-lg transition-colors ${theme === 'ocean' ? 'bg-[#0a2e4a] text-[#38bdf8] shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}><Droplet size={16}/> オーシャン</button>
                <button onClick={() => setTheme('pop')} className={`flex items-center justify-center gap-2 py-2.5 text-sm font-bold rounded-lg transition-colors ${theme === 'pop' ? 'bg-pink-100 border-2 border-pink-300 text-pink-500 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}><Sparkles size={16}/> ポップ</button>
              </div>
           </div>

@@ -314,7 +314,8 @@ function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport
     });
 
     const totalCells = (fd || 0) + (dim || 0);
-    const trailingBlanks = Array.from({ length: 42 - totalCells }).map((_, i) => <div key={`trail-${i}`} className="p-1 h-14"></div>);
+    const trailingCount = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+    const trailingBlanks = Array.from({ length: trailingCount }).map((_, i) => <div key={`trail-${i}`} className="p-1 h-14"></div>);
 
     return (
       <div className="w-1/3 shrink-0 flex-none px-1">

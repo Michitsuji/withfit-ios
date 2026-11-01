@@ -184,6 +184,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     }
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
+        NativeAudioAndTimerManager.shared.triggerHaptic(style: "selection")
         let idx = viewController.tabBarItem.tag
         guard idx >= 0 && idx < tabKeys.count else { return }
         let tabKey = tabKeys[idx]

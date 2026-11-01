@@ -1858,7 +1858,7 @@ export default function App() {
   }, [myInfo?.isTraining, restTimerStart]);
 
   useEffect(() => {
-    syncNativeTheme(myInfo?.theme || 'light');
+    syncNativeTheme(myInfo?.theme === 'pop' ? 'pop' : 'light');
   }, [myInfo?.theme]);
 
   useEffect(() => {
@@ -2485,8 +2485,9 @@ export default function App() {
     return gymName ? `${gymName}で ${friendName} ` : friendName;
   }).join('、');
 
-  const isDarkMode = ['dark', 'ocean', 'mono'].includes(myInfo.theme);
-  const themeContainerClass = myInfo.theme === 'ocean' ? 'theme-ocean' : myInfo.theme === 'pop' ? 'theme-pop' : '';
+  // テーマはライト/ポップの2種のみ（旧テーマ dark/ocean/mono はライトとして扱う）
+  const isDarkMode = false;
+  const themeContainerClass = myInfo.theme === 'pop' ? 'theme-pop' : '';
   
   const visiblePosts = posts.filter(p => p.author === currentUser || myFriends.includes(p.author));
 
@@ -2515,19 +2516,7 @@ export default function App() {
         .dark .bg-slate-900 { background-color: #1e293b !important; }
         .dark .border-slate-800 { border-color: #334155 !important; }
       `}</style>
-      {myInfo.theme === 'ocean' && (
-        <style>{`
-          .theme-ocean.dark, .theme-ocean .bg-slate-950 { background-color: #021526 !important; }
-          .theme-ocean .bg-slate-900 { background-color: #032a4a !important; }
-          .theme-ocean .border-slate-800 { border-color: #0c4a6e !important; }
-          .theme-ocean .text-emerald-500, .theme-ocean .text-emerald-400 { color: #38bdf8 !important; }
-          .theme-ocean .bg-emerald-500 { background-color: #0284c7 !important; }
-          .theme-ocean .border-emerald-500 { border-color: #0284c7 !important; }
-          .theme-ocean .ring-emerald-500 { --tw-ring-color: #0284c7 !important; }
-          .theme-ocean .shadow-emerald-500\\/30 { --tw-shadow-color: rgba(2, 132, 199, 0.3) !important; --tw-shadow: var(--tw-shadow-colored) !important; }
-          .theme-ocean .text-slate-400 { color: #7dd3fc !important; }
-        `}</style>
-      )}
+      
       {myInfo.theme === 'pop' && (
         <style>{`
           .theme-pop, .theme-pop.dark, .theme-pop .bg-slate-950 {
