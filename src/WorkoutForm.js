@@ -919,7 +919,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
     );
   };
 
-  const isConfirmed = false; // 「種目を確定する」機能は廃止（常時編集モード）
+  const isConfirmed = item.isConfirmed;
 
   return (
     <div {...dragHandleProps} className={`${isConfirmed ? 'bg-emerald-50/30 dark:bg-emerald-950/20 border-2 border-emerald-400 dark:border-emerald-600' : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800'} rounded-2xl p-4 shadow-sm relative w-full overflow-visible mb-6 transition-all duration-200 ${isDragging ? 'cursor-grabbing' : 'cursor-auto'}`} onClickCapture={() => onActive && onActive(item.exerciseName)}>
@@ -1179,6 +1179,52 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
         <textarea value={item.memo || ''} onChange={(e) => updateItem(item.id, { memo: e.target.value })} placeholder="種目ごとのメモ（オプション）" className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-sm text-slate-700 dark:text-slate-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none" style={{ fontSize: '16px' }} rows={2} />
       </div>
       </div>
+
+      {!isJointPartner && (
+      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+        <button
+          onClick={() => {
+            if (!item.isConfirmed) {
+              if (!item.exerciseName) {
+                alert("種目を選択してください。");
+                return;
+              }
+              const isCardio = item.weightType === 'cardio';
+              const isLR = item.weightType === 'lr';
+              const isBodyWeight = item.weightType === 'bodyWeight';
+              
+              for (let i = 0; i < item.sets.length; i++) {
+                const set = item.sets[i];
+                if (isCardio) {
+                  if (!set.distance && !set.time && !set.calories) {
+                    alert(`セット${i + 1}の入力が不十分です（距離、時間、カロリーのいずれかを入力してください）。`);
+                    return;
+                  }
+                } else if (isLR) {
+                  if ((set.weight === '' && !isBodyWeight) || (set.lReps === '' && set.rReps === '')) {
+                    alert(`セット${i + 1}の入力が不十分です（重量と左右どちらかの回数を入力してください）。`);
+                    return;
+                  }
+                } else {
+                  if ((set.weight === '' && !isBodyWeight) || set.reps === '') {
+                    alert(`セット${i + 1}の入力が不十分です（重量と回数を入力してください）。`);
+                    return;
+                  }
+                }
+              }
+            }
+            updateItem(item.id, { isConfirmed: !item.isConfirmed });
+          }}
+          className={`w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors ${
+            isConfirmed
+              ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700'
+              : 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-200 dark:hover:bg-emerald-800/60'
+          }`}
+        >
+          {isConfirmed ? <><Edit2 size={18} /> 編集に戻す</> : <><CheckCircle size={18} /> この種目を確定する</>}
+        </button>
+      </div>
+      )}
       
 
 
