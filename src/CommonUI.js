@@ -5,7 +5,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { triggerHaptic } from './nativeBridge';
 import { AlignLeft, Edit2 } from 'lucide-react';
 import { MASTER_USER, generateColor, MUSCLE_CATEGORIES, getCategoryTabColor } from './utils';
-
+import { resolveImageSrc } from './localStore';
 // --- カスタムアイコン ---
 const WithFitLogo = ({ className = "", size = 24 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -66,7 +66,7 @@ const UserAvatar = ({ userId, accountsInfo, size = 40, className = "", onClick =
       onClick={handleAvatarClick}
     >
       {photoUrl ? (
-        <img src={photoUrl} alt={displayName} className="w-full h-full object-cover bg-white" />
+        <img src={resolveImageSrc(photoUrl)} alt={displayName} className="w-full h-full object-cover bg-white" />
       ) : (
         initial
       )}

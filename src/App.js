@@ -18,7 +18,7 @@ import { ExercisesView } from './ExercisesView';
 import { FriendsView, FriendDetailModal } from './FriendsView';
 import { LoginScreen, ProfileModal, UserProfileModal } from './ProfileModals';
 import { SecretGame } from './CoachAndGame';
-import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap, recoverSessionFromNativeDB } from './localStore';
+import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap, recoverSessionFromNativeDB, clearLocalSession, initImageCache } from './localStore';
 import {
   isNativeIosApp,
   postNativeMessage,
@@ -907,8 +907,12 @@ export default function App() {
     // キャッシュ無し（初回ログイン等）は全件ダウンロードで時間がかかる。
     // キャッシュありでも投稿件数が多いとサーバーとの差分確認に時間がかかる、として概算する
     const estimatedMs = !hasCache ? 8000 : 1000 + cachedPosts * 30 + cachedAccounts * 100;
-    notifyLoadEstimate(estimatedMs >= 4000);
+    notifyLoadEstimate(estimatedMs >= 6000);
   }, []);
+  // リモート画像（Googleプロフィール写真など）のローカルキャッシュを初期化する
+  useEffect(() => {
+    if (currentUser) initImageCache(currentUser);
+  }, [currentUser]);
   // 読み込み進捗をネイティブへ通知する（進捗バー表示中は実進捗を反映する）
   const syncedCount = Object.values(serverSynced).filter(Boolean).length;
   const loadProgress = Math.min(1, (isSessionChecked ? 0.15 : 0) + syncedCount * 0.175 + (isDraftLoaded ? 0.15 : 0));
@@ -1442,6 +1446,7 @@ export default function App() {
   const handleLogin = async (username, pin) => {
     if (!db) return false;
     suppressAutoLoginRef.current = false;
+    try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
     let accountData = null;
     try {
       const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
@@ -1471,6 +1476,7 @@ export default function App() {
   const handleGoogleLogin = async (googleUser) => {
     if (!db) return false;
     suppressAutoLoginRef.current = false;
+    try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
     try {
       const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('googleUid', '==', googleUser.uid), limit(1));
       const snap = await getDocs(q);
@@ -1544,6 +1550,7 @@ export default function App() {
 
   const handleSecretLogin = async (friendCode, birthDate) => {
     suppressAutoLoginRef.current = false;
+    try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
     const cleanCode = String(friendCode || '').trim();
     if (!cleanCode || !birthDate) return false;
     // まずサーバー側検証（/api/friendLogin）を試す。成功すると Firebase の正式な
@@ -1606,6 +1613,9 @@ export default function App() {
     } catch (e) {}
     setFirebaseUser(null);
     localStorage.removeItem('withfit_login_session');
+    // ローカルDBに埋め込まれたセッション情報も消し、次回起動時の自動復元を止める
+    try { localStorage.setItem('withfit_explicit_logout', '1'); } catch (e) {}
+    if (currentUser) clearLocalSession(currentUser);
     setCurrentUser(null); setCurrentTab('timeline'); setEditingPost(null);
   };
 
@@ -2514,6 +2524,8 @@ export default function App() {
       suppressAutoLoginRef.current = true;
       setCurrentUser(null);
       localStorage.removeItem('withfit_login_session');
+      try { localStorage.setItem('withfit_explicit_logout', '1'); } catch (e) {}
+      clearLocalSession(userIdToDelete);
       setCurrentTab('timeline');
       setEditingPost(null);
 
