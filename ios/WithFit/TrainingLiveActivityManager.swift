@@ -29,6 +29,24 @@ final class TrainingLiveActivityManager {
         )
     }
 
+    /// 指定した Activity を終了する（iOS 16.1 / 16.2+ のAPI差異を吸収）
+    private func endActivity(_ target: Activity<TrainingActivityAttributes>, finalState: TrainingActivityAttributes.ContentState, dismissNow: Bool) {
+        Task {
+            if #available(iOS 16.2, *) {
+                await target.end(
+                    ActivityContent(state: finalState, staleDate: nil),
+                    dismissalPolicy: dismissNow ? .immediate : .default
+                )
+            } else {
+                await target.end(using: finalState, dismissalPolicy: dismissNow ? .immediate : .default)
+            }
+        }
+    }
+
+    private func emptyState() -> TrainingActivityAttributes.ContentState {
+        makeState(exerciseName: "", exerciseIndex: -1, currentSet: 0, restStartedAt: nil, restEndsAt: nil, restRinging: false)
+    }
+
     /// トレーニング開始時に呼ぶ。既に同じ開始時刻の Activity があれば更新に回す
     func start(startTime: Date, gymName: String, exerciseName: String, exerciseIndex: Int, currentSet: Int, restStartedAt: Date?, restEndsAt: Date?, restRinging: Bool) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
@@ -39,7 +57,23 @@ final class TrainingLiveActivityManager {
             update(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
             return
         }
+        // アプリをキルしても Live Activity 自体はシステムに残り続ける。
+        // 再起動後は self.activity が nil に戻るため、システム側の一覧を確認せずに
+        // 作り直すと2つ目が出来てしまう。同じ開始時刻のものがあれば引き継ぐ。
+        let systemActivities = Activity<TrainingActivityAttributes>.activities
+        if let existing = systemActivities.first(where: { $0.attributes.startTime == startTime }) {
+            for other in systemActivities where other.id != existing.id {
+                endActivity(other, finalState: lastState ?? emptyState(), dismissNow: true)
+            }
+            activity = existing
+            currentStartTime = startTime
+            update(exerciseName: exerciseName, exerciseIndex: exerciseIndex, currentSet: currentSet, restStartedAt: restStartedAt, restEndsAt: restEndsAt, restRinging: restRinging)
+            return
+        }
         // 開始時刻が違う古い Activity が残っていたら終了してから作り直す
+        for stale in systemActivities {
+            endActivity(stale, finalState: lastState ?? emptyState(), dismissNow: true)
+        }
         end(dismissNow: true)
 
         let attributes = TrainingActivityAttributes(gymName: gymName, startTime: startTime)
@@ -79,26 +113,19 @@ final class TrainingLiveActivityManager {
 
     /// トレーニング終了時に呼ぶ
     func end(dismissNow: Bool = false) {
-        guard let activity = activity else {
-            currentStartTime = nil
-            lastState = nil
-            return
-        }
-        self.activity = nil
-        currentStartTime = nil
         // Activity.content は iOS 16.2+ のAPIなので、16.1 でも使えるよう
         // 最後に送った状態を自前で保持して使い回す
-        let finalState = lastState ?? makeState(exerciseName: "", exerciseIndex: -1, currentSet: 0, restStartedAt: nil, restEndsAt: nil, restRinging: false)
+        let finalState = lastState ?? emptyState()
+        let tracked = activity
+        activity = nil
+        currentStartTime = nil
         lastState = nil
-        Task {
-            if #available(iOS 16.2, *) {
-                await activity.end(
-                    ActivityContent(state: finalState, staleDate: nil),
-                    dismissalPolicy: dismissNow ? .immediate : .default
-                )
-            } else {
-                await activity.end(using: finalState, dismissalPolicy: dismissNow ? .immediate : .default)
-            }
+        if let tracked = tracked {
+            endActivity(tracked, finalState: finalState, dismissNow: dismissNow)
+        }
+        // 再起動で参照を失った残存分も含め、システム上の Activity は全て終了する
+        for existing in Activity<TrainingActivityAttributes>.activities where existing.id != tracked?.id {
+            endActivity(existing, finalState: finalState, dismissNow: dismissNow)
         }
     }
 
