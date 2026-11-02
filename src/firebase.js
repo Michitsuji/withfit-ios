@@ -3,7 +3,7 @@
 // ==========================================
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 
 // --- Firebase 初期化 ---
 let app, auth, db, appId = 'withfit-app';
@@ -21,13 +21,10 @@ try {
   };
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  db = getFirestore(app);
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
 
-  if (typeof window !== 'undefined') {
-    enableIndexedDbPersistence(db).catch((err) => {
-      console.warn("Offline persistence error:", err.code);
-    });
-  }
 } catch (error) {
   console.error("Firebase initialization error:", error);
 }

@@ -3,7 +3,28 @@
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
-import { GoogleAuthProvider, signInWithCredential, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { GoogleAuthProvider, signInWithCredential, signInWithCustomToken, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+
+// 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
+// accountsInfo は全ユーザー分を読み込むため、そのままだと全員のフレンドコード・
+// 生年月日（=ログイン情報）とプッシュ用トークンが全クライアントに渡ってしまう。
+const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email'];
+function sanitizeAccountsMap(map) {
+  try {
+    if (!map || typeof map !== 'object') return map;
+    let selfId = null;
+    try { selfId = JSON.parse(localStorage.getItem('withfit_login_session') || '{}').userId || null; } catch (e) {}
+    const out = {};
+    Object.entries(map).forEach(([id, info]) => {
+      if (!info || typeof info !== 'object' || id === selfId) { out[id] = info; return; }
+      const copy = { ...info };
+      SENSITIVE_ACCOUNT_FIELDS.forEach((f) => { delete copy[f]; });
+      out[id] = copy;
+    });
+    return out;
+  } catch (e) { return map; }
+}
+
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
 import { db, appId, auth, app } from './firebase';
@@ -360,6 +381,9 @@ export default function App() {
   const [exercises, setExercises] = useState(boot.exercises); 
 
   const [dataLoaded, setDataLoaded] = useState({ accounts: false, gyms: false, exercises: false, workouts: false });
+  // 各コレクションが「サーバーで確認済みの最新状態」を1回でも返したかどうか（キャッシュ由来は除く）
+  const [serverSynced, setServerSynced] = useState({ accounts: false, gyms: false, exercises: false, workouts: false });
+  const serverChunksRef = useRef(new Set());
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [draftWorkoutItems, setDraftWorkoutItems] = useState(boot.draftItems);
   const [isDraftLoaded, setIsDraftLoaded] = useState(true);
@@ -704,51 +728,39 @@ export default function App() {
       console.error('Firestore notification write error:', e);
     }
 
-    // 2. 登録されているすべての端末トークン（fcmTokens配列 + fcmToken）へプッシュ通知を送信
-    //    （iOS端末はAPNsトークンとしてサーバー側でAPNs直接配信、他はFCM。プレースホルダは除外）
-    const targetTokens = [...new Set([
-      ...(Array.isArray(targetUser.fcmTokens) ? targetUser.fcmTokens : []),
-      targetUser.fcmToken
-    ].filter(t => typeof t === 'string' && t.trim().length > 0 && t !== 'ios_native_local_notification_enabled'))];
-
-    if (targetTokens.length > 0) {
-      // Vercel の /api/sendPush 経由で配信する（サーバー側で APNs / FCM に振り分け）
-      try {
-        const res = await fetch(getApiUrl('/api/sendPush'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            targetToken: targetTokens[targetTokens.length - 1],
-            targetTokens,
-            title,
-            body,
-            data: {
-              type,
-              postId: relatedPostId || '',
-              fromUser: senderId,
-              notifId,
-              url: '/'
-            }
-          })
-        });
-        if (res.ok) {
-          const resJson = await res.json().catch(() => ({}));
-          pushSuccess = Boolean(resJson.success);
-          // 無効化された古いトークンがあれば自動的にFirestoreからクリーンアップ
-          if (Array.isArray(resJson.invalidTokens) && resJson.invalidTokens.length > 0) {
-            const validTokens = targetTokens.filter(t => !resJson.invalidTokens.includes(t));
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', targetUsername), {
-              fcmTokens: validTokens,
-              fcmToken: validTokens.length > 0 ? validTokens[validTokens.length - 1] : deleteField()
-            }, { merge: true }).catch(() => {});
+    // 2. プッシュ通知はサーバー側で相手の端末トークンを解決して送信する
+    //    （トークンをクライアント側に保持・送信する方式は、誰でも任意の端末へ
+    //     通知を送れてしまうため廃止。認証トークン付きで対象ユーザーIDだけを渡す）
+    try {
+      const idToken = auth && auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      const res = await fetch(getApiUrl('/api/sendPush'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        },
+        body: JSON.stringify({
+          targetUserId: targetUsername,
+          title,
+          body,
+          data: {
+            type,
+            postId: relatedPostId || '',
+            fromUser: senderId,
+            notifId,
+            url: '/'
           }
-        }
-      } catch (e) {
-        console.warn('Push API call error:', e);
+        })
+      });
+      if (res.ok) {
+        const resJson = await res.json().catch(() => ({}));
+        pushSuccess = Boolean(resJson.success);
       }
+    } catch (e) {
+      console.warn('Push API call error:', e);
     }
 
-    return { inAppSuccess, pushSuccess, tokenCount: targetTokens.length };
+    return { inAppSuccess, pushSuccess, tokenCount: 0 };
   }, [accountsInfo, currentUser]);
 
   const handleAddComment = async (postId, text, parentId = null) => {
@@ -868,10 +880,19 @@ export default function App() {
   // セッション、基本データ、下書きの全ての読み込みが完了するまでローディングとする
   const isFullyLoaded = isSessionChecked && Object.values(dataLoaded).every(Boolean) && (!currentUser || isDraftLoaded);
 
-  // 起動表示（ロゴの表示と開く演出）はネイティブ側が担当する。Web 側は読み込み完了だけを通知する
+  // 起動表示（ロゴの表示と開く演出）はネイティブ側が担当する。Web 側は準備完了だけを通知する。
+  // 画面を開く条件は「全コレクションがサーバーで確認済みの最新状態になっていること」。
+  // ローカルキャッシュ由来のスナップショットでは開かず、サーバーとの差分チェックが
+  // 済んで表示が最新に揃ってから開く（オフライン時はネイティブ側の6秒フォールバックで開く）。
+  const allServerSynced = serverSynced.gyms && serverSynced.exercises && serverSynced.accounts && serverSynced.workouts;
   useEffect(() => {
-    if (isFullyLoaded) notifyAppReady();
-  }, [isFullyLoaded]);
+    if (!isSessionChecked) return;
+    if (!currentUser) {
+      if (isFullyLoaded) notifyAppReady();
+      return;
+    }
+    if (allServerSynced && isDraftLoaded) notifyAppReady();
+  }, [isSessionChecked, currentUser, allServerSynced, isDraftLoaded, isFullyLoaded]);
 
   useEffect(() => {
     if (redirectUser && dataLoaded.accounts) {
@@ -1156,8 +1177,9 @@ export default function App() {
       const accDiff = diffObjectMap(localCacheRef.current.accountsInfo, accUpdates);
       if (accDiff.hasChanges) {
         hasAnyDiff = true;
-        setAccountsInfo(accDiff.map);
-        localCacheRef.current.accountsInfo = accDiff.map;
+        const safeAccMap = sanitizeAccountsMap(accDiff.map);
+        setAccountsInfo(safeAccMap);
+        localCacheRef.current.accountsInfo = safeAccMap;
       }
 
       // 4. ワークアウト記録の差分チェック
@@ -1213,6 +1235,7 @@ export default function App() {
 
     const gymsRef = collection(db, 'artifacts', appId, 'public', 'data', 'gyms');
     const unsubGyms = onSnapshot(gymsRef, (snapshot) => {
+      if (!snapshot.metadata.fromCache) setServerSynced(prev => prev.gyms ? prev : { ...prev, gyms: true });
       const gymsData = []; 
       snapshot.forEach(doc => { gymsData.push({ id: doc.id, ...doc.data() }); }); 
       gymsData.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -1229,6 +1252,7 @@ export default function App() {
 
     const exercisesRef = collection(db, 'artifacts', appId, 'public', 'data', 'exercises');
     const unsubEx = onSnapshot(exercisesRef, (snapshot) => {
+      if (!snapshot.metadata.fromCache) setServerSynced(prev => prev.exercises ? prev : { ...prev, exercises: true });
       const allExs = [];
       snapshot.forEach(doc => { allExs.push({ id: doc.id, ...doc.data() }); });
       allExs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -1267,9 +1291,16 @@ export default function App() {
     }
     
     const workoutsRef = collection(db, 'artifacts', appId, 'public', 'data', 'workouts');
+    serverChunksRef.current = new Set();
     const unsubs = chunks.map((chunk, index) => {
       const q = query(workoutsRef, where('author', 'in', chunk));
       return onSnapshot(q, (snapshot) => {
+        if (!snapshot.metadata.fromCache) {
+          serverChunksRef.current.add(index);
+          if (serverChunksRef.current.size >= chunks.length) {
+            setServerSynced(prev => prev.workouts ? prev : { ...prev, workouts: true });
+          }
+        }
         const chunkData = []; 
         snapshot.forEach(doc => { chunkData.push({ id: doc.id, ...doc.data() }); });
         postsByChunkRef.current[index] = chunkData;
@@ -1302,12 +1333,14 @@ export default function App() {
     }
     const meRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser);
     const unsub = onSnapshot(meRef, (docSnap) => {
+        if (!docSnap.metadata.fromCache) setServerSynced(prev => prev.accounts ? prev : { ...prev, accounts: true });
        if (docSnap.exists()) {
           const newData = docSnap.data();
           const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [currentUser]: newData });
           if (diff.hasChanges) {
-             setAccountsInfo(diff.map);
-             persistLocalSnapshot({ accountsInfo: diff.map }, diff);
+             const safeSelfMap = sanitizeAccountsMap(diff.map);
+             setAccountsInfo(safeSelfMap);
+             persistLocalSnapshot({ accountsInfo: safeSelfMap }, diff);
           }
           setDataLoaded(prev => ({ ...prev, accounts: true }));
        }
@@ -1490,7 +1523,33 @@ export default function App() {
   const handleSecretLogin = async (friendCode, birthDate) => {
     suppressAutoLoginRef.current = false;
     const cleanCode = String(friendCode || '').trim();
-    if (!db || !cleanCode || !birthDate) return false;
+    if (!cleanCode || !birthDate) return false;
+    // まずサーバー側検証（/api/friendLogin）を試す。成功すると Firebase の正式な
+    // セッション（カスタムトークン）が得られ、照合情報がクライアントに漏れない。
+    // サーバー未設定（501）や通信エラーの場合は、従来のクライアント照合にフォールバックする。
+    try {
+      const res = await fetch(getApiUrl('/api/friendLogin'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ friendCode: cleanCode, birthDate })
+      });
+      if (res.ok) {
+        const j = await res.json().catch(() => null);
+        if (j && j.token && j.username) {
+          await signInWithCustomToken(auth, j.token);
+          setCurrentUser(j.username);
+          localStorage.setItem('withfit_login_session', JSON.stringify({ userId: j.username, lastActive: Date.now() }));
+          if (db) {
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', j.username), { lastActive: Date.now(), isAppOnline: true }, { merge: true }).catch(() => {});
+          }
+          return true;
+        }
+        return false;
+      }
+      if (res.status === 401 || res.status === 429) return false;
+    } catch (e) { /* フォールバックへ */ }
+    // --- 従来のクライアント照合（サーバー未設定時のみ） ---
+    if (!db) return false;
     try {
       const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('friendCode', '==', cleanCode), limit(1));
       const snap = await getDocs(q);

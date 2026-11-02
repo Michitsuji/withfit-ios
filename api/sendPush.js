@@ -249,15 +249,40 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
 
-  const { targetToken, targetTokens, title, body, data } = req.body || {};
+  // 認証必須: アプリユーザーの Firebase ID トークンを検証する（オープンな中継にしない）
+  const idToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  try {
+    if (!idToken) throw new Error('missing token');
+    const { getAuth } = require('firebase-admin/auth');
+    await getAuth().verifyIdToken(idToken);
+  } catch (e) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
 
-  const rawTokens = Array.isArray(targetTokens)
-    ? [...targetTokens, targetToken]
-    : [targetToken];
-  const tokens = [...new Set(rawTokens.filter(t => typeof t === 'string' && t.trim().length > 0))];
+  const { targetUserId, title, body, data } = req.body || {};
+  if (!targetUserId || typeof targetUserId !== 'string') {
+    return res.status(400).json({ success: false, message: 'targetUserId is required' });
+  }
+
+  // 送信先トークンはサーバー側でアカウント情報から解決する。
+  // クライアントからトークンを受け取る方式は、誰でも任意の端末に送れてしまうため廃止。
+  let tokens = [];
+  try {
+    const { getFirestore } = require('firebase-admin/firestore');
+    const accSnap = await getFirestore().doc(`artifacts/withfit-app/public/data/accounts/${targetUserId}`).get();
+    if (accSnap.exists) {
+      const acc = accSnap.data() || {};
+      tokens = [...new Set([
+        ...(Array.isArray(acc.fcmTokens) ? acc.fcmTokens : []),
+        acc.fcmToken
+      ].filter(t => typeof t === 'string' && t.trim().length > 0))];
+    }
+  } catch (e) {
+    console.error('Token lookup failed:', e);
+  }
 
   if (tokens.length === 0) {
-    return res.status(400).json({ success: false, message: 'Token is required' });
+    return res.status(200).json({ success: false, successCount: 0, failureCount: 0, invalidTokens: [], message: 'No device tokens for target user' });
   }
 
   const safeTitle = title || 'WithFit';
@@ -293,6 +318,29 @@ module.exports = async function handler(req, res) {
 
     const successCount = results.filter(r => r.status === 'fulfilled').length;
     const failureCount = results.length - successCount;
+
+    // 無効トークンの掃除もサーバー側で行う（クライアントは他人のトークンを持たない）
+    if (invalidTokens.length > 0) {
+      try {
+        const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+        const ref = getFirestore().doc(`artifacts/withfit-app/public/data/accounts/${targetUserId}`);
+        const snap2 = await ref.get();
+        if (snap2.exists) {
+          const acc2 = snap2.data() || {};
+          const current = [...new Set([
+            ...(Array.isArray(acc2.fcmTokens) ? acc2.fcmTokens : []),
+            acc2.fcmToken
+          ].filter(t => typeof t === 'string' && t.trim().length > 0))];
+          const valid = current.filter(t => !invalidTokens.includes(t));
+          await ref.update({
+            fcmTokens: valid,
+            fcmToken: valid.length > 0 ? valid[valid.length - 1] : FieldValue.delete()
+          });
+        }
+      } catch (e) {
+        console.warn('Token cleanup failed:', e);
+      }
+    }
 
     return res.status(200).json({
       success: successCount > 0,

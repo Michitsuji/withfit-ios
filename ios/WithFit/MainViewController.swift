@@ -56,33 +56,12 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         splash.backgroundColor = UIColor(named: "LaunchBackground") ?? UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
         splash.translatesAutoresizingMaskIntoConstraints = false
 
-        let logo = UIImageView(image: UIImage(named: "SplashMark"))
+        // ロゴ＋文字は1枚の合成画像（LaunchLogo）を使う。起動画面（Launch Screen）と
+        // まったく同じ画像・同じサイズなので、起動画面→スプラッシュで絵が切り替わらない
+        let logo = UIImageView(image: UIImage(named: "LaunchLogo"))
         logo.contentMode = .scaleAspectFit
         logo.translatesAutoresizingMaskIntoConstraints = false
-
-        let withColor = UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
-                : UIColor(red: 30/255, green: 41/255, blue: 59/255, alpha: 1.0)
-        }
-        let title = UILabel()
-        let attributed = NSMutableAttributedString(
-            string: "With",
-            attributes: [.font: UIFont.systemFont(ofSize: 36, weight: .black), .foregroundColor: withColor]
-        )
-        attributed.append(NSAttributedString(
-            string: "Fit",
-            attributes: [.font: UIFont.systemFont(ofSize: 36, weight: .black),
-                         .foregroundColor: UIColor(red: 99/255, green: 102/255, blue: 241/255, alpha: 1.0)]
-        ))
-        title.attributedText = attributed
-
-        let row = UIStackView(arrangedSubviews: [logo, title])
-        row.axis = .horizontal
-        row.alignment = .center
-        row.spacing = 12
-        row.translatesAutoresizingMaskIntoConstraints = false
-        splash.addSubview(row)
+        splash.addSubview(logo)
 
         view.addSubview(splash)
         view.bringSubviewToFront(splash)
@@ -91,9 +70,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             splash.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             splash.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splash.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            row.centerXAnchor.constraint(equalTo: splash.centerXAnchor),
-            row.centerYAnchor.constraint(equalTo: splash.centerYAnchor),
-            logo.widthAnchor.constraint(equalToConstant: 60),
+            logo.centerXAnchor.constraint(equalTo: splash.centerXAnchor),
+            logo.centerYAnchor.constraint(equalTo: splash.centerYAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 200),
             logo.heightAnchor.constraint(equalToConstant: 49)
         ])
         splashView = splash
@@ -282,6 +261,10 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     // MARK: - WKScriptMessageHandler (React -> Swift Native Bridge)
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "WithFitNative" else { return }
+
+        // 呼び出し元がローカルバンドル以外（外部ページやポップアップ等）の場合は受け付けない
+        let senderHost = message.frameInfo.request.url?.host?.lowercased() ?? ""
+        guard senderHost == "localhost" || senderHost == "127.0.0.1" else { return }
 
         var dict: [String: Any]?
         if let bodyDict = message.body as? [String: Any] {
@@ -744,7 +727,11 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                let userObj = try? JSONSerialization.jsonObject(with: userData) {
                 rootDict[userId] = userObj
                 if let outData = try? JSONSerialization.data(withJSONObject: rootDict) {
-                    try? outData.write(to: nativeDBFileURL, options: .atomic)
+                    try? outData.write(to: nativeDBFileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                    var dbURL = nativeDBFileURL
+                    var resourceValues = URLResourceValues()
+                    resourceValues.isExcludedFromBackup = true
+                    try? dbURL.setResourceValues(resourceValues)
                 }
             }
         }
