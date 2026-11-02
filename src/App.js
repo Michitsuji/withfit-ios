@@ -3,7 +3,7 @@
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
-import { GoogleAuthProvider, signInWithCredential, signInWithCustomToken, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithCustomToken, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
@@ -37,7 +37,8 @@ import {
   initGlobalButtonHaptics,
   notifyAppReady,
   notifyLoadProgress,
-  notifyLoadEstimate
+  notifyLoadEstimate,
+  requestAppleSignIn
 } from './nativeBridge';
 
 // 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
@@ -764,6 +765,40 @@ export default function App() {
 
     return { inAppSuccess, pushSuccess, tokenCount: 0 };
   }, [accountsInfo, currentUser]);
+
+  // コンテンツ通報（ガイドライン1.2対応）: 投稿・コメントを運営（マスター）へ報告する
+  const handleReportContent = async ({ targetType, targetId, postId = null, reportedUser, snapshotText = '' }) => {
+    if (!currentUser || !db || !reportedUser) return;
+    try {
+      const reportId = `crep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'contentReports', reportId), {
+        targetType, targetId, postId, reporter: currentUser, reportedUser,
+        snapshotText: String(snapshotText || '').slice(0, 300),
+        status: 'pending', createdAt: Date.now()
+      });
+      alert('通報しました。確認のうえ対応します。');
+    } catch (e) {
+      alert('通報に失敗しました。時間をおいて再度お試しください。');
+    }
+  };
+
+  // ユーザーのブロック（相手の投稿・コメントが表示されなくなり、フレンドも解除される）
+  const handleBlockUser = async (targetUserId) => {
+    if (!currentUser || !db || !targetUserId || targetUserId === currentUser) return;
+    const current = myInfo?.blockedUsers || [];
+    if (current.includes(targetUserId)) return;
+    const nextFriends = (myInfo?.friends || []).filter(f => f !== targetUserId);
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { blockedUsers: [...current, targetUserId], friends: nextFriends }, { merge: true });
+    } catch (e) {}
+  };
+  const handleUnblockUser = async (targetUserId) => {
+    if (!currentUser || !db || !targetUserId) return;
+    const next = (myInfo?.blockedUsers || []).filter(u => u !== targetUserId);
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { blockedUsers: next }, { merge: true });
+    } catch (e) {}
+  };
 
   const handleAddComment = async (postId, text, parentId = null) => {
     if (!currentUser || !db || !text.trim()) return;
@@ -1545,6 +1580,66 @@ export default function App() {
       } else {
          alert('連携に失敗しました。');
       }
+    }
+  };
+
+  // Sign in with Apple（ネイティブ認証 → Firebase 連携 → appleUid でアカウント解決）
+  const handleAppleLogin = async () => {
+    if (!db) return false;
+    suppressAutoLoginRef.current = false;
+    try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
+    let appleRes = null;
+    try { appleRes = await requestAppleSignIn(); } catch (e) {}
+    if (!appleRes || appleRes.error || !appleRes.identityToken) return false;
+    try {
+      const provider = new OAuthProvider('apple.com');
+      const credential = provider.credential({ idToken: appleRes.identityToken, rawNonce: appleRes.nonce || undefined });
+      const result = await signInWithCredential(auth, credential);
+      const appleUser = result.user;
+
+      const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('appleUid', '==', appleUser.uid), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const username = snap.docs[0].id;
+        setCurrentUser(username);
+        localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
+        const joinedGyms = snap.docs[0].data()?.joinedGyms || ['common'];
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+        return true;
+      }
+
+      let baseName = (appleRes.fullName || '').trim() || appleUser.displayName || (appleUser.email ? appleUser.email.split('@')[0] : '') || 'user';
+      const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', baseName));
+      if (docSnap.exists() && !docSnap.data().appleUid && docSnap.data().friendCode) {
+        const username = baseName;
+        setCurrentUser(username);
+        localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
+        const joinedGyms = docSnap.data()?.joinedGyms || ['common'];
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { appleUid: appleUser.uid, lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+        return true;
+      }
+
+      let username = baseName;
+      let counter = 1;
+      while (true) {
+        const checkSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
+        if (checkSnap.exists() && checkSnap.data().friendCode) {
+          username = `${baseName}${counter}`;
+          counter++;
+        } else {
+          break;
+        }
+      }
+
+      const accountsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'));
+      if (accountsSnap.size >= 10) { alert("ユーザー数が上限（10人）に達しているため、新規登録できません。"); return false; }
+
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: username, appleUid: appleUser.uid, friendCode: generateFriendCode(), isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true });
+      setCurrentUser(username);
+      localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
+      return true;
+    } catch (e) {
+      return false;
     }
   };
 
@@ -2543,7 +2638,7 @@ export default function App() {
 
 
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} onSecretLogin={handleSecretLogin} isOnline={isOnline} />;
+    return <LoginScreen onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} onAppleLogin={isNativeIosApp() ? handleAppleLogin : undefined} onSecretLogin={handleSecretLogin} isOnline={isOnline} />;
   }
 
   const myFriends = myInfo.friends || [];
@@ -2561,7 +2656,12 @@ export default function App() {
   const isDarkMode = false;
   const themeContainerClass = myInfo.theme === 'pop' ? 'theme-pop' : '';
   
-  const visiblePosts = posts.filter(p => p.author === currentUser || myFriends.includes(p.author));
+  const blockedUsers = myInfo?.blockedUsers || [];
+  const visiblePosts = posts
+    .filter(p => (p.author === currentUser || myFriends.includes(p.author)) && !blockedUsers.includes(p.author))
+    .map(p => (blockedUsers.length > 0 && Array.isArray(p.comments) && p.comments.some(c => blockedUsers.includes(c.author)))
+      ? { ...p, comments: p.comments.filter(c => !blockedUsers.includes(c.author)) }
+      : p);
 
   const userTokenList = Array.isArray(myInfo.fcmTokens)
     ? myInfo.fcmTokens
@@ -2985,7 +3085,7 @@ export default function App() {
              <button onClick={handleLinkGoogle} className="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors">連携</button>
           </div>
         )}
-        {currentTab === 'timeline' && <TimelineView onRefresh={handleManualDiffCheck} posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
+        {currentTab === 'timeline' && <TimelineView onRefresh={handleManualDiffCheck} onReport={handleReportContent} posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
         {currentTab === 'exercises' && <ExercisesView gyms={allGyms} exercises={exercises} posts={visiblePosts} accountsInfo={accountsInfo} currentUser={currentUser} myInfo={myInfo} setCurrentTab={setCurrentTab} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'record' && <RecordView onUserClick={setSelectedUserProfile} onStart={handleStartTraining} onPost={handlePostWorkout} onCancel={handleCancelTraining} onRequestJointTraining={handleRequestJointTraining} onAcceptJointTraining={handleAcceptJointTraining} onRejectJointTraining={handleRejectJointTraining} onCancelJointTraining={handleCancelJointTraining} onImportItem={handleImportExerciseItem} myInfo={myInfo} gyms={allGyms} exercises={exercises} workoutItems={draftWorkoutItems} setWorkoutItems={setDraftWorkoutItems} selectedCategories={selectedCategories} setSelectedCategories={setSelectedCategories} posts={visiblePosts} currentUser={currentUser} isManual={isRecordManual} setIsManual={setIsRecordManual} onActiveExerciseChange={handleActiveExerciseChange} accountsInfo={accountsInfo} />}
         {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
@@ -3113,7 +3213,7 @@ export default function App() {
         onSendSelfTestPush={handleSendSelfTestPush}
         pushStatus={pushStatus}
       />
-      <UserProfileModal isOpen={!!selectedUserProfile} onClose={() => setSelectedUserProfile(null)} targetUser={selectedUserProfile} accountsInfo={accountsInfo} currentUser={currentUser} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} />
+      <UserProfileModal isOpen={!!selectedUserProfile} onClose={() => setSelectedUserProfile(null)} targetUser={selectedUserProfile} accountsInfo={accountsInfo} currentUser={currentUser} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} onBlockUser={handleBlockUser} onUnblockUser={handleUnblockUser} />
       {showSecretGame && <SecretGame onClose={() => setShowSecretGame(false)} currentUser={currentUser} accountsInfo={accountsInfo} appId={appId} onUserClick={setSelectedUserProfile} />}
     </div>
   );

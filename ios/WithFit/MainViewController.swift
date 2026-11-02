@@ -1,6 +1,8 @@
 import UIKit
 import WebKit
 import UserNotifications
+import AuthenticationServices
+import CryptoKit
 
 final class MainViewController: UITabBarController, UITabBarControllerDelegate, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
 
@@ -22,6 +24,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     private var splashView: UIView?
     private var splashShownAt: CFTimeInterval = 0
     private var splashDismissed = false
+    private var appleSignInNonce: String?
     private var splashProgressView: UIProgressView?
     private var splashProgressValue: Float = 0
     private var splashProgressTimer: Timer?
@@ -335,6 +338,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                     splashProgressView?.setProgress(splashProgressValue, animated: true)
                 }
             }
+
+        case "APPLE_SIGN_IN":
+            startAppleSignIn()
 
         case "HAPTIC":
             let style = payload["style"] as? String ?? "light"
@@ -749,5 +755,54 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 }
             }
         }
+    }
+}
+
+
+// MARK: - Sign in with Apple
+extension MainViewController: ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    private func startAppleSignIn() {
+        let nonce = UUID().uuidString
+        appleSignInNonce = nonce
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = sha256(nonce)
+        let controller = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = self
+        controller.presentationContextProvider = self
+        controller.performRequests()
+    }
+
+    private func sha256(_ input: String) -> String {
+        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        return view.window ?? ASPresentationAnchor()
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+              let tokenData = credential.identityToken,
+              let token = String(data: tokenData, encoding: .utf8) else {
+            sendToWeb(payload: ["type": "APPLE_SIGN_IN_RESULT", "error": "invalid_credential"])
+            return
+        }
+        var payload: [String: Any] = [
+            "type": "APPLE_SIGN_IN_RESULT",
+            "identityToken": token,
+            "appleUserId": credential.user,
+            "nonce": appleSignInNonce ?? ""
+        ]
+        if let name = credential.fullName {
+            let full = [name.familyName, name.givenName].compactMap { $0 }.joined(separator: "")
+            if !full.isEmpty { payload["fullName"] = full }
+        }
+        if let email = credential.email { payload["email"] = email }
+        sendToWeb(payload: payload)
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        sendToWeb(payload: ["type": "APPLE_SIGN_IN_RESULT", "error": "cancelled_or_failed"])
     }
 }

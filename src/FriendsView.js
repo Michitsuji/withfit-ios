@@ -3,7 +3,7 @@
 // ==========================================
 import React, { useState, useEffect, useMemo } from 'react';
 import { Users, Flame, Circle, Trophy, Target, Copy, UserPlus, AlignLeft, Bell, Sparkles, Activity, Award, ArrowUp, ArrowDown, Trash2, X } from 'lucide-react';
-import { onSnapshot, collection, setDoc, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { onSnapshot, collection, setDoc, doc, query, orderBy, deleteDoc, getDoc } from 'firebase/firestore';
 import { db, appId } from './firebase';
 import { MASTER_USER, formatDateFromTimestamp } from './utils';
 import { UserAvatar, renderUsernameWithBadge, TimerDisplay, LiquidGlassSegmented } from './CommonUI';
@@ -38,6 +38,17 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
       return () => unsub();
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser === MASTER_USER && db) {
+      const unsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'contentReports'), (snap) => {
+        let n = 0;
+        snap.forEach(d => { if (d.data().status !== 'resolved') n++; });
+        setContentReportsCount(n);
+      });
+      return () => unsub();
+    }
+  }, [currentUser]);
   const [searchUsername, setSearchUsername] = useState('');
   const [searchPartnerName, setSearchPartnerName] = useState('');
   const partnerName = myInfo?.partnerId;
@@ -56,6 +67,8 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
   const [reportText, setReportText] = useState('');
   const [isSendingReport, setIsSendingReport] = useState(false);
   const [showReportsModal, setShowReportsModal] = useState(false);
+  const [contentReportsCount, setContentReportsCount] = useState(0);
+  const [showContentReportsModal, setShowContentReportsModal] = useState(false);
   const [testPushTarget, setTestPushTarget] = useState(currentUser || '');
   const [testPushMessage, setTestPushMessage] = useState('');
   const [isSendingTestPush, setIsSendingTestPush] = useState(false);
@@ -359,6 +372,14 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
                   </div>
                 )}
               </button>
+              <button onClick={() => setShowContentReportsModal(true)} className="relative w-full py-3 mt-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 font-bold rounded-xl shadow-sm hover:bg-rose-100 dark:hover:bg-rose-900 transition-colors flex items-center justify-center gap-2">
+                <AlignLeft size={18} /> 【マスター限定】コンテンツ通報一覧を見る
+                {contentReportsCount > 0 && (
+                  <div className="absolute -top-2 -right-2 bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md">
+                    {contentReportsCount}
+                  </div>
+                )}
+              </button>
               <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-2xl p-5 shadow-sm mt-4">
                 <h3 className="text-sm font-bold text-amber-700 dark:text-amber-400 mb-4 flex items-center gap-2">
                   <Bell size={18} /> 【マスター限定】通知システム配信テスト
@@ -585,8 +606,13 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
       )}
 
       <ReportsModal isOpen={showReportsModal} onClose={() => setShowReportsModal(false)} db={db} accountsInfo={accountsInfo} onUserClick={onUserClick} />
+      <ContentReportsModal isOpen={showContentReportsModal} onClose={() => setShowContentReportsModal(false)} accountsInfo={accountsInfo} />
 
       <div className="mt-12 text-center pb-4 pt-6 border-t border-slate-200/50 dark:border-slate-800/50">
+        <div className="flex items-center justify-center gap-4 mb-2">
+          <button onClick={() => window.open('https://michitsuji.github.io/withfit-ios/privacy.html', '_blank')} className="text-[11px] font-bold text-slate-400 dark:text-slate-500 underline underline-offset-2">プライバシーポリシー</button>
+          <button onClick={() => window.open('https://michitsuji.github.io/withfit-ios/terms.html', '_blank')} className="text-[11px] font-bold text-slate-400 dark:text-slate-500 underline underline-offset-2">利用規約</button>
+        </div>
         <p className="mb-1 text-[11px] font-bold text-slate-400 dark:text-slate-500">データ保存量（目安）　データベース: {formatBytes(byteSizeOf(posts.filter(p => p.author === currentUser)) + byteSizeOf(accountsInfo[currentUser]))} ／ ローカル: {formatBytes(localStorageBytes())}</p>
         <p className="text-xs font-bold text-slate-400 dark:text-slate-500">WithFit v1.2.0 (2026.10.30, 04:59, updated)</p>
       </div>
@@ -625,6 +651,78 @@ function FriendDetailModal({ friendUsername, posts, accountsInfo, onClose, onTog
 }
 
 // --- 不具合・要望一覧モーダル ---
+function ContentReportsModal({ isOpen, onClose, accountsInfo }) {
+  const [items, setItems] = useState([]);
+
+  useEffect(() => {
+    if (!isOpen || !db) return;
+    const unsub = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'contentReports'), (snap) => {
+      const list = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setItems(list);
+    });
+    return () => unsub();
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+  const pending = items.filter(i => i.status !== 'resolved');
+
+  const markResolved = async (item) => {
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'contentReports', item.id), { status: 'resolved', resolvedAt: Date.now() }, { merge: true });
+    } catch (e) {}
+  };
+
+  const deleteTarget = async (item) => {
+    if (!window.confirm('対象を削除して対応済みにしますか？')) return;
+    try {
+      if (item.targetType === 'post' && item.postId) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'workouts', item.postId));
+      } else if (item.targetType === 'comment' && item.postId && item.targetId) {
+        const postRef = doc(db, 'artifacts', appId, 'public', 'data', 'workouts', item.postId);
+        const snap = await getDoc(postRef);
+        if (snap.exists()) {
+          const comments = (snap.data().comments || []).filter(c => c.id !== item.targetId && c.parentId !== item.targetId);
+          await setDoc(postRef, { comments }, { merge: true });
+        }
+      }
+      await markResolved(item);
+    } catch (e) {
+      alert('削除に失敗しました');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white dark:bg-slate-900 w-full max-w-md max-h-[80vh] overflow-y-auto rounded-3xl p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-base font-black text-slate-800 dark:text-slate-100">コンテンツ通報（未対応 {pending.length}件）</h3>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-full"><X size={18} /></button>
+        </div>
+        {pending.length === 0 ? (
+          <p className="text-sm font-bold text-slate-400 text-center py-8">未対応の通報はありません</p>
+        ) : (
+          <div className="space-y-3">
+            {pending.map(item => (
+              <div key={item.id} className="border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+                <div className="text-[11px] font-bold text-slate-400 mb-1">
+                  {item.targetType === 'post' ? '投稿' : 'コメント'} ／ 通報者: {accountsInfo[item.reporter]?.displayName || item.reporter} ／ 相手: {accountsInfo[item.reportedUser]?.displayName || item.reportedUser}
+                </div>
+                <p className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-words mb-3">{item.snapshotText || '（内容なし）'}</p>
+                <div className="flex gap-2">
+                  <button onClick={() => deleteTarget(item)} className="flex-1 py-2 bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold rounded-lg transition-colors">対象を削除</button>
+                  <button onClick={() => markResolved(item)} className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-lg transition-colors">対応済みにする</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReportsModal({ isOpen, onClose, db, accountsInfo, onUserClick }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);

@@ -1,0 +1,84 @@
+name: iOS App Store Upload
+
+# フェーズ1（有料 Apple Developer 登録後）に有効化するワークフロー。
+# 手動実行（workflow_dispatch）専用。通常の AltStore 向けビルドは ios-build.yml を使う。
+# 事前に GitHub Secrets へ以下を登録すること:
+#   APP_STORE_CONNECT_KEY_ID      : App Store Connect API キーの Key ID
+#   APP_STORE_CONNECT_ISSUER_ID   : 同 Issuer ID
+#   APP_STORE_CONNECT_PRIVATE_KEY : .p8 ファイルの中身
+#   DEVELOPMENT_TEAM              : チームID（10文字）
+# また App Store Connect 側でアプリ（com.michitsuji.withfit）を作成しておくこと。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  appstore:
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          ls /Applications | grep Xcode || true
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          xcodebuild -version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Web App (CRA)
+        run: npm run build
+
+      - name: Sync WebBundle
+        run: |
+          mkdir -p ios/WithFit/WebBundle
+          cp -R build/. ios/WithFit/WebBundle/
+          cp -f public/alarm.mp3 ios/WithFit/alarm.mp3
+
+      - name: Write App Store Connect API Key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/AuthKey.p8"
+
+      - name: Archive (signed, store entitlements)
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.DEVELOPMENT_TEAM }}
+        run: |
+          xcodebuild \
+            -project ios/WithFit.xcodeproj \
+            -scheme WithFit \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/WithFit.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_ENTITLEMENTS=WithFit/WithFit.store.entitlements \
+            archive
+
+      - name: Export and Upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/WithFit.xcarchive" \
+            -exportOptionsPlist ios/ExportOptions.appstore.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"

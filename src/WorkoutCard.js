@@ -2,13 +2,13 @@
 // WorkoutCard.js — ワークアウトカード＆タイムライン画面コンポーネント
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Clock, MapPin, Edit2, Trash2, MoreVertical, FileText, Scale, ListPlus, Copy, X, Dumbbell, Flame, Activity, Zap, AlignLeft, Heart, MessageCircle, ArrowDown, ArrowUp, Send, Plus } from 'lucide-react';
+import { Clock, MapPin, Edit2, Trash2, MoreVertical, Flag, FileText, Scale, ListPlus, Copy, X, Dumbbell, Flame, Activity, Zap, AlignLeft, Heart, MessageCircle, ArrowDown, ArrowUp, Send, Plus } from 'lucide-react';
 import { generateColor, calculateWorkoutTotals, formatShortDateTime, formatDuration, getVolumeMetaphor, getCategoryColor, getRelativeTime } from './utils';
 import { UserAvatar, renderUsernameWithBadge } from './CommonUI';
 import { copyTextToClipboard, triggerHaptic } from './nativeBridge';
 
 // --- 共通コンポーネント：ワークアウトカード ---
-function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onToggleLike, onImport, onImportItem, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick }) {
+function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onToggleLike, onImport, onImportItem, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, onReport }) {
   const [localComments, setLocalComments] = useState(post.comments || []);
   const [showComments, setShowComments] = useState(localComments.length > 0);
   const [commentText, setCommentText] = useState('');
@@ -502,8 +502,27 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
             )}
           </div>
         )}
+      {!isMyPost && onReport && (
+        <div className="flex gap-1 shrink-0 ml-2 relative">
+          <button onClick={() => setShowPostMenu(!showPostMenu)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"><MoreVertical size={16} /></button>
+          {showPostMenu && (
+            <div className="absolute top-full right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg z-20 w-48 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+              <button
+                onClick={() => {
+                  setShowPostMenu(false);
+                  if (window.confirm('この投稿を通報しますか？\n不適切な内容は運営が確認し、対応します。')) {
+                    onReport({ targetType: 'post', targetId: post.id, postId: post.id, reportedUser: post.author, snapshotText: (post.items && post.items[0] && post.items[0].exerciseName) || '' });
+                  }
+                }}
+                className="w-full text-left px-4 py-3 text-sm font-bold text-rose-600 dark:text-rose-400 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
+              >
+                <Flag size={16} /> 通報する
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       </div>
-
       {/* 種目の上のサマリーダッシュボード（体組成グラフのサマリーカードと同じ見やすくスタイリッシュなUI） */}
       {(hasWorkoutStats || hasBodyMetrics) && (
         <div className="ml-3 mb-4 bg-slate-50/95 dark:bg-slate-950/75 border border-slate-200/80 dark:border-slate-800/90 rounded-2xl p-3.5 space-y-3 shadow-sm">
@@ -788,10 +807,22 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
                         </div>
                       </div>
                     </div>
-                    <div className="pl-2 mt-1">
+                    <div className="pl-2 mt-1 flex items-center gap-3">
                       <button onClick={() => handleReply(comment.author, currentRootId)} className="text-[11px] font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
                         返信
                       </button>
+                      {comment.author !== currentUser && onReport && (
+                        <button
+                          onClick={() => {
+                            if (window.confirm('このコメントを通報しますか？\n不適切な内容は運営が確認し、対応します。')) {
+                              onReport({ targetType: 'comment', targetId: comment.id, postId: post.id, reportedUser: comment.author, snapshotText: comment.text || '' });
+                            }
+                          }}
+                          className="text-[11px] font-bold text-slate-400 hover:text-rose-500"
+                        >
+                          通報
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -899,7 +930,7 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
 }
 
 // --- タイムライン画面（画面追従＆シンプル円形スピナー Pull-to-Refresh） ---
-function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser, onDelete, onEdit, accountsInfo, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, scrollToPostId, setScrollToPostId, onRefresh }) {
+function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser, onDelete, onEdit, accountsInfo, onAddComment, onDeleteComment, onToggleCommentLike, onUserClick, scrollToPostId, setScrollToPostId, onRefresh, onReport }) {
   const [displayLimit, setDisplayLimit] = useState(10);
   const [pullOffset, setPullOffset] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
@@ -1073,7 +1104,7 @@ function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser
           <>
             {displayedPosts.map((post, index) => (
               <React.Fragment key={post.id}>
-                <WorkoutCard post={post} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={onEdit} onDelete={onDelete} onToggleLike={onToggleLike} onImport={onImport} onImportItem={onImportItem} onAddComment={onAddComment} onDeleteComment={onDeleteComment} onToggleCommentLike={onToggleCommentLike} onUserClick={onUserClick} />
+                <WorkoutCard post={post} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={onEdit} onDelete={onDelete} onToggleLike={onToggleLike} onImport={onImport} onImportItem={onImportItem} onAddComment={onAddComment} onDeleteComment={onDeleteComment} onToggleCommentLike={onToggleCommentLike} onUserClick={onUserClick} onReport={onReport} />
               </React.Fragment>
             ))}
             {posts.length > displayLimit && (

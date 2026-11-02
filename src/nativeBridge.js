@@ -32,6 +32,36 @@ export function postNativeMessage(payload) {
 // iOS Taptic Engine 触覚フィードバック
 let lastHapticAt = 0;
 
+// Sign in with Apple（ネイティブ認証 → 結果を Promise で受け取る）
+let appleSignInResolver = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (event) => {
+    const data = event && event.data;
+    if (data && data.type === 'APPLE_SIGN_IN_RESULT' && appleSignInResolver) {
+      const resolve = appleSignInResolver;
+      appleSignInResolver = null;
+      resolve(data);
+    }
+  });
+}
+
+export function requestAppleSignIn() {
+  return new Promise((resolve) => {
+    if (!isNativeIosApp()) {
+      resolve({ error: 'not_native' });
+      return;
+    }
+    appleSignInResolver = resolve;
+    postNativeMessage({ type: 'APPLE_SIGN_IN' });
+    setTimeout(() => {
+      if (appleSignInResolver === resolve) {
+        appleSignInResolver = null;
+        resolve({ error: 'timeout' });
+      }
+    }, 120000);
+  });
+}
+
 // 起動時の読み込み完了をネイティブへ通知する（起動表示はネイティブ側が担当）
 export function notifyAppReady() {
   postNativeMessage({ type: 'APP_READY' });

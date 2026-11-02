@@ -26,6 +26,7 @@ targets:
           - "WebBundle/**"
           - "Info.plist"
           - "WithFit.entitlements"
+          - "WithFit.store.entitlements"
       - path: WithFit/WebBundle
         type: folder
         buildPhase: resources

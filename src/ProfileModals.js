@@ -462,7 +462,7 @@ function ProfileModal({
 }
 
 // --- ユーザープロフィールモーダル ---
-function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUser, onSendRequest, onUserClick }) {
+function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUser, onSendRequest, onUserClick, onBlockUser, onUnblockUser }) {
   const [view, setView] = useState('profile');
 
   useEffect(() => {
@@ -510,6 +510,17 @@ function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUs
               {targetUser !== currentUser && (accountsInfo[targetUser]?.friendRequests || []).includes(currentUser) && (
                 <div className="w-full mt-2 text-center text-sm font-bold text-slate-400 py-3 bg-slate-100 dark:bg-slate-800 rounded-xl">フレンド申請済み</div>
               )}
+              {targetUser !== currentUser && onBlockUser && onUnblockUser && (
+                (accountsInfo[currentUser]?.blockedUsers || []).includes(targetUser) ? (
+                  <button onClick={() => onUnblockUser(targetUser)} className="w-full mt-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold py-3 rounded-xl transition-all">
+                    ブロックを解除する
+                  </button>
+                ) : (
+                  <button onClick={() => { if (window.confirm('このユーザーをブロックしますか？\n相手の投稿・コメントが表示されなくなり、フレンドも解除されます。')) { onBlockUser(targetUser); onClose(); } }} className="w-full mt-2 bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900 text-rose-500 font-bold py-3 rounded-xl transition-all">
+                    このユーザーをブロック
+                  </button>
+                )
+              )}
             </div>
           </>
         ) : (
@@ -556,7 +567,7 @@ function UserProfileModal({ isOpen, onClose, targetUser, accountsInfo, currentUs
 }
 
 // --- ログイン・登録画面 ---
-function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
+function LoginScreen({ onLogin, onGoogleLogin, onAppleLogin, onSecretLogin, isOnline }) {
   const [agreed, setAgreed] = useState(false);
   const [secretTapCount, setSecretTapCount] = useState(0);
   const [showSecretLogin, setShowSecretLogin] = useState(false);
@@ -599,7 +610,12 @@ function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
 
 3. 免責事項
 ・本アプリは個人開発のサービスです。予期せぬシステムの不具合やデータの消失等が発生した場合、一切の責任を負いかねますので、あらかじめご了承ください。
-・友達同士でマナーを守り、楽しくアプリを活用しましょう！`;
+・友達同士でマナーを守り、楽しくアプリを活用しましょう！
+
+4. 禁止事項とコンテンツの取り扱い
+・他のユーザーへの嫌がらせ、なりすまし、不快または不適切なコンテンツの投稿を禁止します。本サービスでは不適切なコンテンツを容認しません。
+・不適切な内容を見つけた場合は、各投稿・コメントの「通報する」から報告できます。報告されたコンテンツは運営が確認し、削除等の対応を行う場合があります。
+・迷惑行為を行うユーザーは、プロフィール画面からブロックできます。ブロックしたユーザーの投稿とコメントはあなたには表示されなくなります。`;
 
   return (
     <div className="min-h-screen w-full overflow-y-auto bg-slate-50 flex flex-col items-center justify-center p-6 relative">
@@ -659,6 +675,15 @@ function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
                > 
                  Googleでログイン / 登録
                </button>
+               {onAppleLogin && (
+                 <button
+                   type="button"
+                   onClick={() => { if (agreed) onAppleLogin(); }}
+                   className={`w-full mt-3 font-bold py-3 rounded-xl shadow-sm flex items-center justify-center gap-2 transition-colors ${agreed ? 'bg-black text-white hover:bg-slate-900' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                 >
+                   <span className="text-base leading-none"></span> Appleでログイン / 登録
+                 </button>
+               )}
                <button
                  type="button"
                  onClick={() => setShowSecretLogin(true)}
