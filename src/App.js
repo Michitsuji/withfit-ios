@@ -5,26 +5,6 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
 import { GoogleAuthProvider, signInWithCredential, signInWithCustomToken, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 
-// 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
-// accountsInfo は全ユーザー分を読み込むため、そのままだと全員のフレンドコード・
-// 生年月日（=ログイン情報）とプッシュ用トークンが全クライアントに渡ってしまう。
-const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email'];
-function sanitizeAccountsMap(map) {
-  try {
-    if (!map || typeof map !== 'object') return map;
-    let selfId = null;
-    try { selfId = JSON.parse(localStorage.getItem('withfit_login_session') || '{}').userId || null; } catch (e) {}
-    const out = {};
-    Object.entries(map).forEach(([id, info]) => {
-      if (!info || typeof info !== 'object' || id === selfId) { out[id] = info; return; }
-      const copy = { ...info };
-      SENSITIVE_ACCOUNT_FIELDS.forEach((f) => { delete copy[f]; });
-      out[id] = copy;
-    });
-    return out;
-  } catch (e) { return map; }
-}
-
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
 import { db, appId, auth, app } from './firebase';
@@ -57,6 +37,26 @@ import {
   initGlobalButtonHaptics,
   notifyAppReady
 } from './nativeBridge';
+
+// 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
+// accountsInfo は全ユーザー分を読み込むため、そのままだと全員のフレンドコード・
+// 生年月日（=ログイン情報）とプッシュ用トークンが全クライアントに渡ってしまう。
+const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email'];
+function sanitizeAccountsMap(map) {
+  try {
+    if (!map || typeof map !== 'object') return map;
+    let selfId = null;
+    try { selfId = JSON.parse(localStorage.getItem('withfit_login_session') || '{}').userId || null; } catch (e) {}
+    const out = {};
+    Object.entries(map).forEach(([id, info]) => {
+      if (!info || typeof info !== 'object' || id === selfId) { out[id] = info; return; }
+      const copy = { ...info };
+      SENSITIVE_ACCOUNT_FIELDS.forEach((f) => { delete copy[f]; });
+      out[id] = copy;
+    });
+    return out;
+  } catch (e) { return map; }
+}
 
 const VAPID_PUBLIC_KEY = 'BAty8GYk1zuoZVh-ZaSdcJsq_o-7vXJLXPNVNzlgsq9rd3wP-jQtclYEdu1MnnLN_0BnlmiKuoWH3X2YvOFl7aM';
 const DEVICE_TOKEN_STORAGE_KEY = 'withfit_device_fcm_token';
