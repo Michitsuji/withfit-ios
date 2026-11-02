@@ -1044,14 +1044,8 @@ function RecordView({ onUserClick, onStart, onPost, onCancel, onRequestJointTrai
     return (
       <div className="space-y-5 animate-in fade-in duration-300">
         {modeSwitchBar}
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">プログラム管理</h2>
         {/* プログラム作成機能 */}
         <div className="mt-6 w-full">
-          <div className="flex justify-between items-center mb-3">
-            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-               <Target size={16} className="text-blue-500" /> プログラム管理
-            </h3>
-          </div>
           
           {activeProgramsList.map(prog => (
             <ActiveProgramDisplay 

@@ -346,7 +346,6 @@ function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport
 
 
       <div>
-        <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">月間レポート ({month + 1}月)</h3>
         <MonthlyReport monthDate={currentMonth} posts={posts} userName={displayUser} accountsInfo={accountsInfo} onUserClick={onUserClick} />
       </div>
 
