@@ -14,6 +14,7 @@ function ProfileModal({
   onSave,
   currentUser,
   onLinkGoogle,
+  onLinkApple,
   onDeleteAccount,
   onTogglePush,
   onRefreshPush,
@@ -250,6 +251,15 @@ function ProfileModal({
              <button onClick={onLinkGoogle} className="w-full bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-xl shadow-sm flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors">
                 Googleアカウントと連携
              </button>
+          )}
+          {onLinkApple && (
+            userInfo?.appleUid ? (
+              <p className="text-sm text-emerald-600 font-bold bg-emerald-50 p-3 rounded-xl text-center border border-emerald-200">✓ Appleアカウント連携済み</p>
+            ) : (
+              <button onClick={onLinkApple} className="w-full bg-black text-white font-bold py-3 rounded-xl shadow-sm flex items-center justify-center gap-2 hover:bg-slate-900 transition-colors">
+                <span className="text-base leading-none"></span> Appleアカウントと連携
+              </button>
+            )
           )}
         </div>
         <div className="flex flex-col items-center space-y-6">

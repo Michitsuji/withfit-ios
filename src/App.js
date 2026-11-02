@@ -1557,6 +1557,28 @@ export default function App() {
     } catch (e) { return false; }
   };
 
+  // ログイン中のアカウントへの Apple 連携（Google 連携と同じ仕組み・双方向対応）
+  const handleLinkApple = async () => {
+    if (!currentUser || !db || !auth) return;
+    let appleRes = null;
+    try { appleRes = await requestAppleSignIn(); } catch (e) {}
+    if (!appleRes || appleRes.error || !appleRes.identityToken) return;
+    try {
+      const provider = new OAuthProvider('apple.com');
+      const credential = provider.credential({ idToken: appleRes.identityToken, rawNonce: appleRes.nonce || undefined });
+      const result = await signInWithCredential(auth, credential);
+      const existingUser = Object.entries(accountsInfo).find(([uname, data]) => data.appleUid === result.user.uid);
+      if (existingUser && existingUser[0] !== currentUser) {
+        alert('このAppleアカウントは既に別のアカウントに紐づけられています。');
+        return;
+      }
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { appleUid: result.user.uid }, { merge: true });
+      alert('Appleアカウントと連携しました。');
+    } catch (e) {
+      alert('Appleアカウントとの連携に失敗しました。');
+    }
+  };
+
   const handleLinkGoogle = async () => {
     if (!currentUser || !db || !auth) return;
     if (typeof window !== 'undefined' && window.ReactNativeWebView && !window.WithFitNative) {
@@ -3207,6 +3229,7 @@ export default function App() {
         onSave={handleSaveProfile}
         currentUser={currentUser}
         onLinkGoogle={handleLinkGoogle}
+        onLinkApple={isNativeIosApp() ? handleLinkApple : undefined}
         onDeleteAccount={handleDeleteAccount}
         onTogglePush={handleTogglePushPermission}
         onRefreshPush={handleRefreshPushToken}
