@@ -590,9 +590,6 @@ function ExercisesView({ gyms, exercises, posts, accountsInfo, currentUser, myIn
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white">種目とジムの管理</h2>
-      </div>
       
       <LiquidGlassSegmented
         value={activeTab}

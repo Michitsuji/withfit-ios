@@ -200,3 +200,15 @@ main .bg-white.rounded-3xl {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
+
+/* 起動スプラッシュの終了演出（X風: ロゴが拡大しながらアプリが開く） */
+@keyframes withfit-splash-zoom {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes withfit-splash-bg {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.splash-exit-content { animation: withfit-splash-zoom 0.55s ease-in forwards; }
+.splash-exit-bg { animation: withfit-splash-bg 0.55s ease-in forwards; }

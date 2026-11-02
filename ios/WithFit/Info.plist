@@ -64,6 +64,8 @@
 	<dict>
 		<key>UIColorName</key>
 		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>LaunchLogo</string>
 	</dict>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
@@ -76,7 +78,7 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<string>ca-app-pub-4120727270628988~7007967219</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>あなたに合った広告を表示するために使用します。許可しない場合も、パーソナライズされていない広告が表示されます。</string>
 	<key>SKAdNetworkItems</key>

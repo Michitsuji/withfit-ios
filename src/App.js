@@ -875,13 +875,22 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
   const showSplash = !isFullyLoaded || !splashMinElapsed;
+  const [splashLeaving, setSplashLeaving] = useState(false);
+  const [splashGone, setSplashGone] = useState(false);
+  useEffect(() => {
+    if (!showSplash && !splashGone && !splashLeaving) {
+      setSplashLeaving(true);
+      const t = setTimeout(() => { setSplashLeaving(false); setSplashGone(true); }, 580);
+      return () => clearTimeout(t);
+    }
+  }, [showSplash, splashGone, splashLeaving]);
 
   // 読み込みが終わるまではネイティブタブバーを隠す（ロゴのみのスプラッシュ表示にするため）
   useEffect(() => {
     if (isNativeIosApp()) {
-      setNativeTabBarHidden(showSplash);
+      setNativeTabBarHidden(showSplash || splashLeaving);
     }
-  }, [showSplash]);
+  }, [showSplash, splashLeaving]);
 
   useEffect(() => {
     if (redirectUser && dataLoaded.accounts) {
@@ -2470,8 +2479,17 @@ export default function App() {
     );
   }
 
+  const splashExitOverlay = splashLeaving ? (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-50 dark:bg-slate-950 splash-exit-bg">
+      <div className="flex items-center gap-3 splash-exit-content">
+        <WithFitLogo size={56} className="text-indigo-500" />
+        <span className="text-4xl font-black tracking-tight text-slate-800 dark:text-white">With<span className="text-indigo-500">Fit</span></span>
+      </div>
+    </div>
+  ) : null;
+
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} onSecretLogin={handleSecretLogin} isOnline={isOnline} />;
+    return (<><LoginScreen onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} onSecretLogin={handleSecretLogin} isOnline={isOnline} />{splashExitOverlay}</>);
   }
 
   const myFriends = myInfo.friends || [];
@@ -2509,6 +2527,7 @@ export default function App() {
 
   return (
     <div className={`ios-app-canvas min-h-screen font-sans pb-28 overflow-x-hidden select-none transition-colors duration-300 ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} ${themeContainerClass}`}>
+      {splashExitOverlay}
       <style>{`
         input, textarea, select { font-size: 16px !important; }
         .dark, .dark body { background-color: #0f172a !important; color: #f8fafc !important; }

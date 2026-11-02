@@ -342,7 +342,6 @@ function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">データ</h2>
 
 
 

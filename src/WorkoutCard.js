@@ -1064,7 +1064,6 @@ function TimelineView({ posts, onToggleLike, onImport, onImportItem, currentUser
           transition: isPulling ? 'none' : 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)'
         }}
       >
-        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">タイムライン</h2>
         {!posts || posts.length === 0 ? (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center mt-10 shadow-sm">
             <Dumbbell className="mx-auto text-slate-300 dark:text-slate-600 w-12 h-12 mb-4" />

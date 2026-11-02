@@ -11,6 +11,21 @@ import { copyTextToClipboard } from './nativeBridge';
 import { DataView } from './DataView';
 
 // --- フレンド画面 ---
+// データ保存量の概算ヘルパー（フッター表示用）
+const byteSizeOf = (v) => { try { return new Blob([typeof v === 'string' ? v : JSON.stringify(v ?? {})]).size; } catch (e) { return 0; } };
+const formatBytes = (b) => b >= 1048576 ? `${(b / 1048576).toFixed(2)} MB` : b >= 1024 ? `${(b / 1024).toFixed(1)} KB` : `${b} B`;
+const localStorageBytes = () => {
+  try {
+    let t = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      t += byteSizeOf(k) + byteSizeOf(localStorage.getItem(k) || '');
+    }
+    if (typeof window !== 'undefined' && window.__WITHFIT_NATIVE_DB__) t += byteSizeOf(window.__WITHFIT_NATIVE_DB__);
+    return t;
+  } catch (e) { return 0; }
+};
+
 function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush }) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [reportsCount, setReportsCount] = useState(0);
@@ -151,7 +166,6 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
 
   return (
     <div className="space-y-6 animate-in fade-in">
-      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">フレンド</h2>
       
       <LiquidGlassSegmented
         className="mb-6"
@@ -573,6 +587,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
       <ReportsModal isOpen={showReportsModal} onClose={() => setShowReportsModal(false)} db={db} accountsInfo={accountsInfo} onUserClick={onUserClick} />
 
       <div className="mt-12 text-center pb-4 pt-6 border-t border-slate-200/50 dark:border-slate-800/50">
+        <p className="mb-1 text-[11px] font-bold text-slate-400 dark:text-slate-500">データ保存量（目安）　データベース: {formatBytes(byteSizeOf(posts.filter(p => p.author === currentUser)) + byteSizeOf(accountsInfo[currentUser]))} ／ ローカル: {formatBytes(localStorageBytes())}</p>
         <p className="text-xs font-bold text-slate-400 dark:text-slate-500">WithFit v1.2.0 (2026.10.30, 04:59, updated)</p>
       </div>
     </div>

@@ -95,7 +95,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
 
     private func setupWebView() {
         view.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
-        statusBarBackgroundView.backgroundColor = .white
+        statusBarBackgroundView.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
         statusBarBackgroundView.translatesAutoresizingMaskIntoConstraints = false
 
         let config = WKWebViewConfiguration()

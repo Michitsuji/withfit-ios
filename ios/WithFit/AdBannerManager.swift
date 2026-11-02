@@ -3,10 +3,10 @@ import GoogleMobileAds
 import AppTrackingTransparency
 
 // AdMob 設定（表示課金制バナー広告）
-// NOTE: 現在は Google 公式のテスト用 ID。本番化には AdMob アカウントで発行した ID に差し替える。
+// NOTE: 本番 ID（2026-11-02 AdMob 登録済み）。アプリ ID は Info.plist の GADApplicationIdentifier。
 enum AdMobConfig {
-    /// バナー広告ユニット ID（テスト用）
-    static let bannerAdUnitID = "ca-app-pub-3940256099942544/2934735716"
+    /// バナー広告ユニット ID（本番）
+    static let bannerAdUnitID = "ca-app-pub-4120727270628988/8839923633"
 }
 
 /// 画面下部（タブバーの上）に固定表示する AdMob バナーの管理。
