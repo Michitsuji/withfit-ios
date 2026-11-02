@@ -25,7 +25,7 @@
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>WithFitBackendBaseURL</key>
-	<string>https://withfit.vercel.app</string>
+	<string>https://withfit-pwa.vercel.app</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

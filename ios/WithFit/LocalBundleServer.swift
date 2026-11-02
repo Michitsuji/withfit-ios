@@ -21,7 +21,7 @@ final class LocalBundleServer {
         if let plistURL = Bundle.main.object(forInfoDictionaryKey: "WithFitBackendBaseURL") as? String, !plistURL.isEmpty {
             return plistURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
-        return "https://withfit.vercel.app"
+        return "https://withfit-pwa.vercel.app"
     }
 
     private init() {
