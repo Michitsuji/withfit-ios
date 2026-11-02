@@ -1585,83 +1585,43 @@ export default function App() {
   };
 
   const handleGoogleLogin = async (googleUser) => {
-    if (!db) return false;
-    suppressAutoLoginRef.current = false;
-    try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
+    if (!db || !googleUser) return false;
     try {
-      const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('googleUid', '==', googleUser.uid), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const username = snap.docs[0].id;
-        setCurrentUser(username);
-        localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
-        const joinedGyms = snap.docs[0].data()?.joinedGyms || ['common'];
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
-        return true;
+      let username = null;
+      // 1) uidMap（認証UID→ユーザー名）で解決する
+      try {
+        const mapSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'uidMap', googleUser.uid));
+        if (mapSnap.exists() && mapSnap.data().username) username = mapSnap.data().username;
+      } catch (e) {}
+      // 2) サーバーAPIで金庫（privateAccounts）の googleUid から解決する
+      if (!username) {
+        try {
+          const idToken = await googleUser.getIdToken();
+          const res = await fetch(getApiUrl('/api/findUserByUid'), {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${idToken}` }
+          });
+          if (res.ok) {
+            const j = await res.json();
+            if (j && j.username) username = j.username;
+          }
+        } catch (e) {}
       }
-      
-      let baseName = googleUser.displayName || (googleUser.email ? googleUser.email.split('@')[0] : 'user');
-      const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', baseName));
-      if (docSnap.exists() && !docSnap.data().googleUid) {
-         const username = baseName;
-         setCurrentUser(username);
-         localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
-         const joinedGyms = docSnap.data()?.joinedGyms || ['common'];
-         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { googleUid: googleUser.uid, lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
-         const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username);
-         const privSnap = await getDoc(privRef).catch(() => null);
-         if (privSnap && privSnap.exists()) {
-           await setDoc(privRef, { googleUid: googleUser.uid }, { merge: true }).catch(() => {});
-         } else {
-           await setDoc(privRef, { googleUid: googleUser.uid, friendCode: generateFriendCode() }, { merge: true }).catch(() => {});
-         }
-         return true;
-      }
-
-      let username = baseName;
-      let counter = 1;
-      while (true) {
-        const checkSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
-        if (checkSnap.exists()) {
-          username = `${baseName}${counter}`;
-          counter++;
-        } else {
-          break;
-        }
-      }
-      
-      const accountsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'));
-      if (accountsSnap.size >= 10) { alert("ユーザー数が上限（10人）に達しているため、新規登録できません。"); return false; }
-
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: username, googleUid: googleUser.uid, isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true });
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username), { friendCode: generateFriendCode(), googleUid: googleUser.uid }, { merge: true });
-      setCurrentUser(username); 
+      // 解決できない場合は推測でアカウントを作らない（誤った新規登録・別アカウント誤認を防ぐ）
+      if (!username) return false;
+      // uidMap を先に用意してから（ルールの本人判定で参照される）プロフィールを更新する
+      try {
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'uidMap', googleUser.uid), { username }, { merge: true });
+      } catch (e) {}
+      setCurrentUser(username);
       localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
+      try {
+        const accSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
+        const joinedGyms = (accSnap.exists() ? accSnap.data()?.joinedGyms : null) || ['common'];
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+      } catch (e) {}
       return true;
     } catch (e) { return false; }
-  };
-
-  // ログイン中のアカウントへの Apple 連携（Google 連携と同じ仕組み・双方向対応）
-  const handleLinkApple = async () => {
-    if (!currentUser || !db || !auth) return;
-    let appleRes = null;
-    try { appleRes = await requestAppleSignIn(); } catch (e) {}
-    if (!appleRes || appleRes.error || !appleRes.identityToken) return;
-    try {
-      const provider = new OAuthProvider('apple.com');
-      const credential = provider.credential({ idToken: appleRes.identityToken, rawNonce: appleRes.nonce || undefined });
-      const result = await signInWithCredential(auth, credential);
-      const existingUser = Object.entries(accountsInfo).find(([uname, data]) => data.appleUid === result.user.uid);
-      if (existingUser && existingUser[0] !== currentUser) {
-        alert('このAppleアカウントは既に別のアカウントに紐づけられています。');
-        return;
-      }
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { appleUid: result.user.uid }, { merge: true });
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { appleUid: result.user.uid }, { merge: true }).catch(() => {});
-      alert('Appleアカウントと連携しました。');
-    } catch (e) {
-      alert('Appleアカウントとの連携に失敗しました。');
-    }
   };
 
   const handleLinkGoogle = async () => {
