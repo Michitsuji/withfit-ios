@@ -81,6 +81,25 @@ function throttled(key) {
   return rec.count > 10;
 }
 
+// 生年月日の表記ゆれ（ゼロ埋めあり/なし）を吸収して比較する。
+// 解釈できない値同士は従来どおり文字列の完全一致で判定する
+function dateKey(v) {
+  const m = String(v || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
+function birthDatesMatch(stored, given) {
+  const a = dateKey(stored);
+  const b = dateKey(given);
+  if (a && b) return a === b;
+  return stored === given;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -131,7 +150,7 @@ module.exports = async function handler(req, res) {
         matchedBirthDate = (snap.docs[0].data() || {}).birthDate;
       }
     }
-    if (!username || !matchedBirthDate || matchedBirthDate !== birthDate) {
+    if (!username || !matchedBirthDate || !birthDatesMatch(matchedBirthDate, birthDate)) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const token = createFirebaseCustomToken(username);
