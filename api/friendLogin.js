@@ -10,7 +10,6 @@
 // ・未設定の場合は 501 を返し、クライアントは従来方式にフォールバックする。
 // ==========================================
 const { getApps, initializeApp, cert } = require('firebase-admin/app');
-const { getAuth } = require('firebase-admin/auth');
 const { getFirestore } = require('firebase-admin/firestore');
 
 let adminReady = false;
@@ -33,6 +32,40 @@ try {
   );
 } catch (e) {
   adminReady = false;
+}
+
+
+// ------------------------------------------
+// Firebase カスタムトークンの発行（firebase-admin/auth を使わない実装）
+// 理由: sendPush と同じく firebase-admin/auth がこの実行環境で読み込めないため、
+// サービスアカウント鍵で JWT (RS256) を自前で署名する。
+// ------------------------------------------
+const crypto = require('crypto');
+
+function b64urlEncode(input) {
+  return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function createFirebaseCustomToken(uid) {
+  const email = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY
+    ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    : undefined;
+  if (!email || !privateKey) throw new Error('missing service account env');
+  const nowSec = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: email,
+    sub: email,
+    aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+    iat: nowSec,
+    exp: nowSec + 3600,
+    uid: String(uid),
+  };
+  const unsigned = `${b64urlEncode(JSON.stringify(header))}.${b64urlEncode(JSON.stringify(payload))}`;
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(unsigned);
+  return `${unsigned}.${b64urlEncode(signer.sign(privateKey))}`;
 }
 
 // 簡易レート制限（同一コード / 同一IP から10分間に10回まで）
@@ -88,7 +121,7 @@ module.exports = async function handler(req, res) {
     if (!data.birthDate || data.birthDate !== birthDate) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const token = await getAuth().createCustomToken(docSnap.id);
+    const token = createFirebaseCustomToken(docSnap.id);
     return res.status(200).json({ token, username: docSnap.id });
   } catch (e) {
     console.error('friendLogin error:', e);

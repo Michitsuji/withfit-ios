@@ -236,6 +236,66 @@ async function sendViaFcm(token, safeTitle, safeBody, safeData) {
   }
 }
 
+
+// ------------------------------------------
+// Firebase IDトークンの検証（firebase-admin/auth を使わない実装）
+// 理由: 実行環境 (Vercel) では firebase-admin/auth の依存チェーン
+// (jwks-rsa → ESM専用 jose) が require() で読み込めず、読み込み時点で
+// 関数がクラッシュする (ERR_REQUIRE_ESM)。そのため署名検証を自前で行う。
+// ------------------------------------------
+const https = require('https');
+let cachedGoogleCerts = null;
+let cachedGoogleCertsExpireAt = 0;
+
+function fetchJson(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (resp) => {
+      let d = '';
+      resp.on('data', c => { d += c; });
+      resp.on('end', () => {
+        try { resolve({ json: JSON.parse(d), headers: resp.headers }); }
+        catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function getGoogleCerts() {
+  const now = Date.now();
+  if (cachedGoogleCerts && now < cachedGoogleCertsExpireAt) return cachedGoogleCerts;
+  const { json, headers } = await fetchJson('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com');
+  let maxAge = 3600;
+  const m = String(headers['cache-control'] || '').match(/max-age=(\d+)/);
+  if (m) maxAge = parseInt(m[1], 10);
+  cachedGoogleCerts = json;
+  cachedGoogleCertsExpireAt = now + maxAge * 1000;
+  return json;
+}
+
+function b64urlDecodeToBuffer(str) {
+  return Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+}
+
+async function verifyFirebaseIdToken(idToken, projectId) {
+  const parts = String(idToken).split('.');
+  if (parts.length !== 3) throw new Error('malformed token');
+  const header = JSON.parse(b64urlDecodeToBuffer(parts[0]).toString('utf8'));
+  const payload = JSON.parse(b64urlDecodeToBuffer(parts[1]).toString('utf8'));
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('bad header');
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!payload.exp || payload.exp <= nowSec) throw new Error('expired');
+  if (payload.aud !== projectId) throw new Error('bad aud');
+  if (payload.iss !== `https://securetoken.google.com/${projectId}`) throw new Error('bad iss');
+  if (!payload.sub) throw new Error('bad sub');
+  const certs = await getGoogleCerts();
+  const pem = certs[header.kid];
+  if (!pem) throw new Error('unknown kid');
+  const verifier = crypto.createVerify('RSA-SHA256');
+  verifier.update(`${parts[0]}.${parts[1]}`);
+  if (!verifier.verify(pem, b64urlDecodeToBuffer(parts[2]))) throw new Error('bad signature');
+  return payload;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -253,8 +313,7 @@ module.exports = async function handler(req, res) {
   const idToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   try {
     if (!idToken) throw new Error('missing token');
-    const { getAuth } = require('firebase-admin/auth');
-    await getAuth().verifyIdToken(idToken);
+    await verifyFirebaseIdToken(idToken, process.env.FIREBASE_PROJECT_ID);
   } catch (e) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
