@@ -44,7 +44,7 @@ import {
 // 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
 // accountsInfo は全ユーザー分を読み込むため、そのままだと全員のフレンドコード・
 // 生年月日（=ログイン情報）とプッシュ用トークンが全クライアントに渡ってしまう。
-const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email'];
+const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email', 'weight'];
 function sanitizeAccountsMap(map) {
   try {
     if (!map || typeof map !== 'object') return map;
@@ -2003,11 +2003,14 @@ export default function App() {
     setAccountsInfo(nextAcc);
     persistLocalSnapshot({ accountsInfo: nextAcc }, { added: 0, modified: 1, removed: 0 });
     if (shouldClose) setShowProfileModal(false);
-    // 生年月日はログイン情報の一部なので秘密情報側（privateAccounts）に保存する
-    const { birthDate, ...profileData } = data || {};
+    // 生年月日はログイン情報、体重は健康情報なので、どちらも秘密情報側（privateAccounts）に保存する
+    const { birthDate, weight, ...profileData } = data || {};
     try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), profileData, { merge: true }); } catch (e) {}
-    if (birthDate !== undefined) {
-      try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { birthDate: birthDate || '' }, { merge: true }); } catch (e) {}
+    if (birthDate !== undefined || weight !== undefined) {
+      const priv = {};
+      if (birthDate !== undefined) priv.birthDate = birthDate || '';
+      if (weight !== undefined) priv.weight = weight ?? null;
+      try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), priv, { merge: true }); } catch (e) {}
     }
   };
 
