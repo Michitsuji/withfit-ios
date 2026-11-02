@@ -421,7 +421,7 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
           {showBadges && (
             <div className="flex justify-center flex-wrap gap-1 mt-1">
               {setObj.isWeightPR && <span className="text-[10px] text-amber-500 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-900 font-bold whitespace-nowrap">🏆重量更新</span>}
-              {setObj.isRepsPR && <span className="text-[10px] text-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-900 font-bold whitespace-nowrap">🎖️回数更新</span>}
+              {setObj.isRepsPR && <span className="text-[10px] text-blue-500 bg-blue-50 dark:bg-blue-950/50 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-900 font-bold whitespace-nowrap">🎖️回数更新</span>}
             </div>
           )}
           {rmTextNode}
@@ -527,7 +527,7 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
 
                 <div className="px-1 flex flex-col items-center justify-center">
                   <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
-                    <ListPlus size={11} className="text-indigo-500 shrink-0" />
+                    <ListPlus size={11} className="text-blue-500 shrink-0" />
                     <span>セット数</span>
                   </div>
                   <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
@@ -585,7 +585,7 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
             <div className={hasWorkoutStats ? "pt-2.5 border-t border-slate-200/70 dark:border-slate-800" : ""}>
               {hideMetrics ? (
                 <div className="flex items-center justify-between px-2 py-1">
-                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
                     <Scale size={14} /> 体組成データ
                   </span>
                   <span className="text-xs font-bold text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-900 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-800">
@@ -611,11 +611,11 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
                   {post.bodyFat && (
                     <div className="px-1 flex flex-col items-center justify-center">
                       <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-0.5 flex items-center gap-1 whitespace-nowrap">
-                        <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0"></span>
+                        <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
                         <span>体脂肪率</span>
                       </div>
                       <div className="flex items-baseline justify-center gap-0.5 whitespace-nowrap">
-                        <span className="text-base sm:text-lg font-black tracking-tight font-mono text-indigo-600 dark:text-indigo-400 leading-tight">
+                        <span className="text-base sm:text-lg font-black tracking-tight font-mono text-blue-600 dark:text-blue-400 leading-tight">
                           {Number(post.bodyFat).toFixed(1)}
                         </span>
                         <span className="text-[10px] font-bold text-slate-400">%</span>
@@ -660,14 +660,14 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
                 </div>
                 {item.isSuperSet && item.superExerciseName && (
                   <div className="flex items-center gap-2 flex-wrap pl-5">
-                    <Zap size={14} className="text-indigo-400 shrink-0"/>
-                    <span className="font-bold text-indigo-600 dark:text-indigo-400 text-sm truncate">{item.superExerciseName}</span>
+                    <Zap size={14} className="text-blue-400 shrink-0"/>
+                    <span className="font-bold text-blue-600 dark:text-blue-400 text-sm truncate">{item.superExerciseName}</span>
                   </div>
                 )}
                 {item.isSuperSet && item.superExerciseName3 && (
                   <div className="flex items-center gap-2 flex-wrap pl-5">
-                    <Zap size={14} className="text-indigo-400 shrink-0"/>
-                    <span className="font-bold text-indigo-600 dark:text-indigo-400 text-sm truncate">{item.superExerciseName3}</span>
+                    <Zap size={14} className="text-blue-400 shrink-0"/>
+                    <span className="font-bold text-blue-600 dark:text-blue-400 text-sm truncate">{item.superExerciseName3}</span>
                   </div>
                 )}
               </div>

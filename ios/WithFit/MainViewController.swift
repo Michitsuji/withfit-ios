@@ -22,6 +22,10 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     private var splashView: UIView?
     private var splashShownAt: CFTimeInterval = 0
     private var splashDismissed = false
+    private var splashProgressView: UIProgressView?
+    private var splashProgressValue: Float = 0
+    private var splashProgressTimer: Timer?
+    private var splashProgressShown = false
     private var isTabBarForceHidden = false
 
     private func refreshTabBarVisibility() {
@@ -75,6 +79,26 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             logo.widthAnchor.constraint(equalToConstant: 200),
             logo.heightAnchor.constraint(equalToConstant: 49)
         ])
+
+        // 長時間ロード用: スプラッシュ表示が5秒を超えたら進捗バーを出す
+        let progressView = UIProgressView(progressViewStyle: .bar)
+        progressView.trackTintColor = UIColor(red: 203/255, green: 213/255, blue: 225/255, alpha: 1.0)
+        progressView.progressTintColor = UIColor(red: 0/255, green: 112/255, blue: 192/255, alpha: 1.0)
+        progressView.layer.cornerRadius = 2
+        progressView.clipsToBounds = true
+        progressView.alpha = 0
+        progressView.translatesAutoresizingMaskIntoConstraints = false
+        splash.addSubview(progressView)
+        NSLayoutConstraint.activate([
+            progressView.centerXAnchor.constraint(equalTo: splash.centerXAnchor),
+            progressView.topAnchor.constraint(equalTo: logo.bottomAnchor, constant: 28),
+            progressView.widthAnchor.constraint(equalToConstant: 160),
+            progressView.heightAnchor.constraint(equalToConstant: 4)
+        ])
+        splashProgressView = progressView
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            self?.showSplashProgressIfNeeded()
+        }
         splashView = splash
         splashShownAt = CACurrentMediaTime()
         // Web 側から準備完了が来ない場合の保険（6秒で自動的に開く）
@@ -83,9 +107,33 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         }
     }
 
+    private func showSplashProgressIfNeeded() {
+        guard !splashDismissed, splashView != nil, !splashProgressShown else { return }
+        splashProgressShown = true
+        if splashProgressValue > 0 {
+            splashProgressView?.setProgress(splashProgressValue, animated: false)
+        }
+        UIView.animate(withDuration: 0.3) {
+            self.splashProgressView?.alpha = 1
+        }
+        // 実進捗が止まって見えないよう、95%を上限にゆっくり進める
+        splashProgressTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+            guard let self = self, !self.splashDismissed else { return }
+            if self.splashProgressValue < 0.95 {
+                self.splashProgressValue = min(0.95, self.splashProgressValue + (0.95 - self.splashProgressValue) * 0.02 + 0.001)
+                self.splashProgressView?.setProgress(self.splashProgressValue, animated: true)
+            }
+        }
+    }
+
     private func dismissSplash() {
         guard !splashDismissed, let splash = splashView else { return }
         splashDismissed = true
+        splashProgressTimer?.invalidate()
+        splashProgressTimer = nil
+        if splashProgressShown {
+            splashProgressView?.setProgress(1.0, animated: true)
+        }
         let elapsed = CACurrentMediaTime() - splashShownAt
         let wait = max(0, 1.0 - elapsed)
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
@@ -145,7 +193,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         // 起動直後は必ずタブバーを隠す。Web側の読み込みが完了し、
         // ログイン状態が SYNC_ACTIVE_TAB で届いてから表示する
         self.tabBar.isHidden = true
-        self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0)
+        self.tabBar.tintColor = UIColor(red: 0/255, green: 112/255, blue: 192/255, alpha: 1.0)
     }
 
     private func setupWebView() {
@@ -199,10 +247,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         webView.allowsLinkPreview = false
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 
-        let settingsGesture = UITapGestureRecognizer(target: self, action: #selector(showNativeDeveloperMenu))
-        settingsGesture.numberOfTouchesRequired = 3
-        settingsGesture.numberOfTapsRequired = 2
-        view.addGestureRecognizer(settingsGesture)
     }
 
     private func attachWebView(to targetVC: UIViewController) {
@@ -279,6 +323,14 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         switch type {
         case "APP_READY":
             dismissSplash()
+
+        case "LOAD_PROGRESS":
+            if let v = payload["value"] as? Double {
+                splashProgressValue = max(splashProgressValue, Float(min(1.0, max(0.0, v))))
+                if splashProgressShown {
+                    splashProgressView?.setProgress(splashProgressValue, animated: true)
+                }
+            }
 
         case "HAPTIC":
             let style = payload["style"] as? String ?? "light"
@@ -399,11 +451,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         case "COPY_TO_CLIPBOARD":
             if let text = payload["text"] as? String {
                 UIPasteboard.general.string = text
-            }
-
-        case "SET_BACKEND_URL":
-            if let urlStr = payload["url"] as? String {
-                LocalBundleServer.shared.backendBaseURL = urlStr
             }
 
         case "SAVE_LOCAL_DB":
@@ -662,43 +709,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         syncNotificationPermissionStatus()
-    }
-
-    @objc private func showNativeDeveloperMenu() {
-        NativeAudioAndTimerManager.shared.triggerHaptic(style: "medium")
-        let sheet = UIAlertController(
-            title: "WithFit iOS ネイティブ設定",
-            message: "APIサーバーURL: \(LocalBundleServer.shared.backendBaseURL)",
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "画面を再読み込み", style: .default) { [weak self] _ in
-            self?.webView.reload()
-        })
-        sheet.addAction(UIAlertAction(title: "APIサーバーURLを変更", style: .default) { [weak self] _ in
-            self?.promptBackendURLChange()
-        })
-        sheet.addAction(UIAlertAction(title: "キャンセル", style: .cancel, handler: nil))
-        presentTopAlert(sheet)
-    }
-
-    private func promptBackendURLChange() {
-        let alert = UIAlertController(
-            title: "APIサーバーURL設定",
-            message: "プッシュ通知(/api/sendPush)用のバックエンドURLを入力してください",
-            preferredStyle: .alert
-        )
-        alert.addTextField { tf in
-            tf.text = LocalBundleServer.shared.backendBaseURL
-            tf.placeholder = "https://withfit.vercel.app"
-            tf.keyboardType = .URL
-        }
-        alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "保存", style: .default) { _ in
-            if let text = alert.textFields?.first?.text, !text.isEmpty {
-                LocalBundleServer.shared.backendBaseURL = text
-            }
-        })
-        presentTopAlert(alert)
     }
 
     // MARK: - iOS Native File Persistence for Local DB (Documents/withfit_local_db.json)

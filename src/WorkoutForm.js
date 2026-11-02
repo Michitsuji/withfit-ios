@@ -227,7 +227,7 @@ function ExerciseSearchSelect({
   };
 
   const baseBorderClass = isSuperSetSelect
-    ? 'border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/40'
+    ? 'border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/40'
     : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950';
 
   return (
@@ -991,14 +991,14 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
 
       {item.weightType !== 'cardio' && (
         <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide py-1 pl-8">
-          <button onClick={() => updateItem(item.id, { isSuperSet: !item.isSuperSet })} className={`whitespace-nowrap px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${item.isSuperSet ? 'bg-indigo-50 dark:bg-indigo-950 border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>スーパー</button>
+          <button onClick={() => updateItem(item.id, { isSuperSet: !item.isSuperSet })} className={`whitespace-nowrap px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${item.isSuperSet ? 'bg-blue-50 dark:bg-blue-950 border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-300' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>スーパー</button>
           <button onClick={() => updateItem(item.id, { isDropSet: !item.isDropSet })} className={`whitespace-nowrap px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${item.isDropSet ? 'bg-orange-50 dark:bg-orange-950 border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>ドロップ</button>
           <button onClick={() => updateItem(item.id, { isForcedReps: !item.isForcedReps })} className={`whitespace-nowrap px-3 py-1.5 text-xs font-bold rounded-full border transition-colors ${item.isForcedReps ? 'bg-rose-50 dark:bg-rose-950 border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>補助</button>
         </div>
       )}
 
       {item.isSuperSet && item.weightType !== 'cardio' && (
-        <div className="mb-5 pl-3 border-l-2 border-indigo-300 dark:border-indigo-600 space-y-3">
+        <div className="mb-5 pl-3 border-l-2 border-blue-300 dark:border-blue-600 space-y-3">
           {!isJointPartner ? (
             <ExerciseSearchSelect
               value={item.superExerciseName || ''}
@@ -1012,7 +1012,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
               excludeCardio={true}
             />
           ) : (
-            <div className="w-full bg-indigo-50/30 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-800 rounded-lg px-3 py-2 text-indigo-800 dark:text-indigo-300 font-bold text-base">
+            <div className="w-full bg-blue-50/30 dark:bg-blue-950/50 border border-blue-100 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 font-bold text-base">
               {item.superExerciseName || "スーパーセット種目"}
             </div>
           )}
@@ -1035,7 +1035,7 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
             )
           ) : (
             item.superExerciseName3 && (
-              <div className="w-full bg-indigo-50/30 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-800 rounded-lg px-3 py-2 text-indigo-800 dark:text-indigo-300 font-bold text-base">
+              <div className="w-full bg-blue-50/30 dark:bg-blue-950/50 border border-blue-100 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 font-bold text-base">
                 {item.superExerciseName3}
               </div>
             )
@@ -1102,8 +1102,8 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
 
                 {item.isSuperSet && item.superExerciseName && item.weightType !== 'cardio' && (
                   <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2 mt-2">
-                    <div className="flex items-center gap-1.5 pl-2 border-l-2 border-indigo-300 dark:border-indigo-700 ml-1">
-                      <Zap size={14} className="text-indigo-400 flex-shrink-0" />
+                    <div className="flex items-center gap-1.5 pl-2 border-l-2 border-blue-300 dark:border-blue-700 ml-1">
+                      <Zap size={14} className="text-blue-400 flex-shrink-0" />
                       {renderInputRow(set, item.superWeightType || 'total', 'super2', false)}
                       <div className="w-6 shrink-0"></div>
                     </div>
@@ -1134,8 +1134,8 @@ function WorkoutItemForm({ item, index, availableExercises, allGymExercises = []
                 
                 {item.isSuperSet && item.superExerciseName3 && item.weightType !== 'cardio' && (
                   <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2 mt-2">
-                    <div className="flex items-center gap-1.5 pl-2 border-l-2 border-indigo-300 dark:border-indigo-700 ml-1">
-                      <Zap size={14} className="text-indigo-400 flex-shrink-0" />
+                    <div className="flex items-center gap-1.5 pl-2 border-l-2 border-blue-300 dark:border-blue-700 ml-1">
+                      <Zap size={14} className="text-blue-400 flex-shrink-0" />
                       {renderInputRow(set, item.superWeightType3 || 'total', 'super3', false)}
                       <div className="w-6 shrink-0"></div>
                     </div>

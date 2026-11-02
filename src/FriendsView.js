@@ -275,15 +275,15 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
             </div>
           </div>
 
-          <div className="bg-gradient-to-br from-indigo-600 to-purple-600 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden">
+          <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-6 text-white shadow-lg relative overflow-hidden">
              <div className="absolute top-2 right-2 text-white/20"><Trophy size={80}/></div>
              <div className="relative z-10">
                <h3 className="font-bold text-lg flex items-center gap-2 mb-2"><Target size={20}/> 今月のふたりで500トンチャレンジ！</h3>
-               <p className="text-xs text-indigo-100 font-bold mb-4">ふたりの合計総負荷量で500,000kgを目指そう！</p>
+               <p className="text-xs text-blue-100 font-bold mb-4">ふたりの合計総負荷量で500,000kgを目指そう！</p>
                
                <div className="flex justify-between items-end mb-2">
                   <span className="text-2xl font-bold">{totalMonthVolume.toLocaleString()} <span className="text-sm font-normal">kg</span></span>
-                  <span className="text-sm font-bold text-indigo-200">/ 500,000 kg</span>
+                  <span className="text-sm font-bold text-blue-200">/ 500,000 kg</span>
                </div>
                
                <div className="w-full h-4 bg-black/30 rounded-full overflow-hidden flex">
@@ -351,7 +351,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
 
           {currentUser === MASTER_USER && (
             <>
-              <button onClick={() => setShowReportsModal(true)} className="relative w-full py-3 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 text-indigo-600 dark:text-indigo-400 font-bold rounded-xl shadow-sm hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors flex items-center justify-center gap-2">
+              <button onClick={() => setShowReportsModal(true)} className="relative w-full py-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-blue-600 dark:text-blue-400 font-bold rounded-xl shadow-sm hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors flex items-center justify-center gap-2">
                 <AlignLeft size={18} /> 【マスター限定】不具合報告一覧を見る
                 {reportsCount > 0 && (
                   <div className="absolute -top-2 -right-2 bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md">
@@ -437,7 +437,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
               }
             }} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
               <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-2">
-                <Sparkles size={16} className="text-indigo-500" /> 不具合・ご要望の報告
+                <Sparkles size={16} className="text-blue-500" /> 不具合・ご要望の報告
               </h3>
               <textarea 
                 value={reportText} 
@@ -451,7 +451,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
               <button 
                 type="submit" 
                 disabled={isSendingReport || !reportText.trim()} 
-                className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2.5 rounded-xl text-sm shadow-md transition-colors disabled:opacity-50 mt-3 flex items-center justify-center gap-2"
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2.5 rounded-xl text-sm shadow-md transition-colors disabled:opacity-50 mt-3 flex items-center justify-center gap-2"
               >
                 {isSendingReport ? <Activity size={16} className="animate-spin" /> : '報告を送信する'}
               </button>
@@ -462,7 +462,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
 
       {activeTab === 'friends' && (
         <div className="space-y-4">
-          <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-3xl p-5 text-white shadow-xl mb-6 overflow-hidden relative">
+          <div className="bg-gradient-to-br from-blue-600 via-purple-600 to-pink-500 rounded-3xl p-5 text-white shadow-xl mb-6 overflow-hidden relative">
             <div className="absolute -right-6 -bottom-6 text-white/10 transform rotate-12 pointer-events-none">
               <Trophy size={140} />
             </div>
@@ -512,13 +512,13 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
              <div className="mb-6 space-y-2">
                 <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">承認待ち</h3>
                 {myInfo.friendRequests.map(reqUser => (
-                   <div key={reqUser} className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                   <div key={reqUser} className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl p-3 flex items-center justify-between shadow-sm">
                       <div className="flex items-center gap-3">
                          <UserAvatar userId={reqUser} accountsInfo={accountsInfo} size={40} onClick={onUserClick} />
                          {renderUsernameWithBadge(reqUser, accountsInfo[reqUser]?.displayName, accountsInfo, "font-bold text-slate-800 dark:text-slate-100 text-sm", onUserClick)}
                       </div>
                       <div className="flex gap-2">
-                         <button onClick={() => onAccept(reqUser)} className="px-3 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg transition-colors">承認</button>
+                         <button onClick={() => onAccept(reqUser)} className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold rounded-lg transition-colors">承認</button>
                          <button onClick={() => onReject(reqUser)} className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold rounded-lg transition-colors">拒否</button>
                       </div>
                    </div>

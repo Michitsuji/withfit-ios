@@ -37,6 +37,11 @@ export function notifyAppReady() {
   postNativeMessage({ type: 'APP_READY' });
 }
 
+// 起動時の読み込み進捗（0〜1）をネイティブへ通知する（長時間ロード時の進捗バー用）
+export function notifyLoadProgress(value) {
+  postNativeMessage({ type: 'LOAD_PROGRESS', value });
+}
+
 let globalButtonHapticsInitialized = false;
 
 // 全ての <button> に共通の触覚フィードバックを付ける（App 起動時に一度だけ呼ぶ）。

@@ -108,10 +108,10 @@ function BodyCompositionInfo({ info, dailyCalories = 0, dateLabel = '' }) {
 
           advancedStatsBlock = (
              <div className="flex gap-2 sm:gap-3 w-full">
-                <div className="flex-1 bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-100 dark:border-indigo-900 rounded-xl p-3 flex flex-col">
-                   <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold mb-1">FFMI (除脂肪量指数)</p>
-                   <p className="text-lg font-bold text-indigo-700 dark:text-indigo-300">{ffmi.toFixed(1)} <span className="text-xs font-normal">({evalText})</span></p>
-                   <p className="text-[9px] text-indigo-500 dark:text-indigo-500 mt-auto pt-1">※男性20、女性16以上で優秀</p>
+                <div className="flex-1 bg-blue-50 dark:bg-blue-950/50 border border-blue-100 dark:border-blue-900 rounded-xl p-3 flex flex-col">
+                   <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mb-1">FFMI (除脂肪量指数)</p>
+                   <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{ffmi.toFixed(1)} <span className="text-xs font-normal">({evalText})</span></p>
+                   <p className="text-[9px] text-blue-500 dark:text-blue-500 mt-auto pt-1">※男性20、女性16以上で優秀</p>
                 </div>
                 <div className="flex-1 bg-cyan-50 dark:bg-cyan-950/50 border border-cyan-100 dark:border-cyan-900 rounded-xl p-3 flex flex-col">
                    <p className="text-[10px] text-cyan-600 dark:text-cyan-400 font-bold mb-1">除脂肪体重 (LBM)</p>
@@ -412,7 +412,7 @@ function DataView({ posts, currentUser, accountsInfo, onEdit, onDelete, onImport
       <div className="space-y-6 pt-4">
          <h3 className="text-lg font-bold text-slate-900 dark:text-white">体重・体脂肪率の推移</h3>
          <SimpleChart data={weightData} color="#10b981" unit="kg" title={`${accountsInfo[displayUser]?.displayName || displayUser}の体重推移 (kg)`} />
-         <SimpleChart data={fatData} color="#6366f1" unit="%" title={`${accountsInfo[displayUser]?.displayName || displayUser}の体脂肪率推移 (%)`} />
+         <SimpleChart data={fatData} color="#0070C0" unit="%" title={`${accountsInfo[displayUser]?.displayName || displayUser}の体脂肪率推移 (%)`} />
       </div>
       )}
     </div>
@@ -632,7 +632,7 @@ function ExerciseChartModal({ exercise, posts, accountsInfo, onClose, currentUse
         { key: 'volume', label: '総負荷量' }
       ];
 
-  const palette = ['#10b981', '#6366f1', '#f43f5e', '#f59e0b', '#06b6d4'];
+  const palette = ['#10b981', '#0070C0', '#f43f5e', '#f59e0b', '#06b6d4'];
   const getAuthorColor = (author, idx) => {
     if (author === currentUser) return '#10b981';
     return palette[(idx + 1) % palette.length];
@@ -859,7 +859,7 @@ function ExerciseChartModal({ exercise, posts, accountsInfo, onClose, currentUse
                     onClick={() => setViewMode(prev => prev === 'me' ? 'compare' : 'me')}
                     className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all shrink-0 ${
                       effectiveViewMode === 'compare'
-                        ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400'
+                        ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-800 text-blue-600 dark:text-blue-400'
                         : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
                     }`}
                   >

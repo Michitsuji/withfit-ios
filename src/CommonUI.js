@@ -855,8 +855,8 @@ function RecordWheelWrapper({ myInfo, currentTab, setCurrentTab, children }) {
               type="button"
               onClick={(e) => { e.stopPropagation(); executeSelection('left'); }}
               onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); executeSelection('left'); }}
-              className={`relative w-28 h-28 bg-indigo-500/95 backdrop-blur-md rounded-tl-full flex items-center justify-center border-[3px] border-r-[1.5px] border-indigo-300 dark:border-indigo-700 transition-transform duration-150 ${
-                hovered === 'left' ? 'scale-110 bg-indigo-500 z-10 shadow-[0_0_20px_rgba(99,102,241,0.65)]' : 'opacity-85 hover:opacity-100'
+              className={`relative w-28 h-28 bg-blue-500/95 backdrop-blur-md rounded-tl-full flex items-center justify-center border-[3px] border-r-[1.5px] border-blue-300 dark:border-blue-700 transition-transform duration-150 ${
+                hovered === 'left' ? 'scale-110 bg-blue-500 z-10 shadow-[0_0_20px_rgba(99,102,241,0.65)]' : 'opacity-85 hover:opacity-100'
               } origin-bottom-right`}
             >
               <div className="flex flex-col items-center justify-center text-white mr-3 mt-5">
@@ -921,7 +921,7 @@ function NavButton({ icon, label, isActive, onClick, isPrimary, isTraining }) {
   const pillClass = isTraining && isPrimary
     ? 'liquid-glass-pill-training text-amber-500 dark:text-amber-400'
     : isActive
-    ? 'liquid-glass-pill-active text-indigo-600 dark:text-indigo-400'
+    ? 'liquid-glass-pill-active text-blue-600 dark:text-blue-400'
     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200';
 
   return (
@@ -1094,7 +1094,7 @@ function LiquidGlassTabBar({ tabs, activeTabKey, onSelectTab }) {
                 tab.isTraining
                   ? 'text-amber-500 dark:text-amber-400'
                   : isSelected
-                  ? 'text-indigo-600 dark:text-indigo-400'
+                  ? 'text-blue-600 dark:text-blue-400'
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
@@ -1243,7 +1243,7 @@ function LiquidGlassSegmented({ options, value, onChange, className = "" }) {
             {opt.icon}
             <span>{opt.label}</span>
             {opt.badge !== undefined && opt.badge > 0 && (
-              <span className="ml-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-indigo-500 text-white leading-none">
+              <span className="ml-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-blue-500 text-white leading-none">
                 {opt.badge}
               </span>
             )}

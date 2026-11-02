@@ -385,7 +385,7 @@ function ProfileModal({
                         type="button"
                         disabled={isPushBusy}
                         onClick={() => handlePushAction(onSendSelfTestPush)}
-                        className="py-2 px-3 rounded-xl font-bold text-xs bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 flex items-center justify-center gap-1.5 transition-colors"
+                        className="py-2 px-3 rounded-xl font-bold text-xs bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950/50 flex items-center justify-center gap-1.5 transition-colors"
                       >
                         <Send size={13} /> テスト通知送信
                       </button>
@@ -609,7 +609,7 @@ function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
       </div>
       <div className="w-full max-w-sm flex flex-col items-center my-auto py-6">
         <div className="mb-6 flex flex-col items-center">
-          <WithFitLogo className="text-indigo-500 w-16 h-16 mb-2" />
+          <WithFitLogo className="text-[#0070C0] w-16 h-16 mb-2" />
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">WithFit</h1>
           <p className="text-sm text-slate-500 font-bold mt-1">みんなで鍛える、記録アプリ</p>
         </div>
@@ -662,7 +662,7 @@ function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
                <button
                  type="button"
                  onClick={() => setShowSecretLogin(true)}
-                 className="w-full mt-3 text-xs font-bold text-slate-500 hover:text-indigo-600 py-2 transition-colors"
+                 className="w-full mt-3 text-xs font-bold text-slate-500 hover:text-blue-600 py-2 transition-colors"
                >
                  フレンドコードでログイン（PC・別端末用）
                </button>
@@ -673,13 +673,13 @@ function LoginScreen({ onLogin, onGoogleLogin, onSecretLogin, isOnline }) {
                {secretError && <p className="text-xs font-bold text-rose-500 bg-rose-50 p-2 rounded-lg text-center">{secretError}</p>}
                <div>
                  <label className="block text-xs font-bold text-slate-500 mb-1">フレンドコード</label>
-                 <input type="text" value={secretCode} onChange={e => setSecretCode(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-indigo-500" />
+                 <input type="text" value={secretCode} onChange={e => setSecretCode(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-blue-500" />
                </div>
                <div>
                  <label className="block text-xs font-bold text-slate-500 mb-1">生年月日</label>
-                 <input type="date" value={secretBirthDate} onChange={e => setSecretBirthDate(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-indigo-500" />
+                 <input type="date" value={secretBirthDate} onChange={e => setSecretBirthDate(e.target.value)} required className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-blue-500" />
                </div>
-               <button type="submit" disabled={isSecretSubmitting} className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-sm transition-colors mt-2">
+               <button type="submit" disabled={isSecretSubmitting} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-xl shadow-sm transition-colors mt-2">
                  {isSecretSubmitting ? 'ログイン中...' : 'ログイン'}
                </button>
                <button type="button" onClick={() => setShowSecretLogin(false)} className="w-full text-slate-500 font-bold py-3 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors mt-2">

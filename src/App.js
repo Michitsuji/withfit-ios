@@ -35,7 +35,8 @@ import {
   checkNativePushPermission,
   getApiUrl,
   initGlobalButtonHaptics,
-  notifyAppReady
+  notifyAppReady,
+  notifyLoadProgress
 } from './nativeBridge';
 
 // 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
@@ -893,6 +894,12 @@ export default function App() {
     }
     if (allServerSynced && isDraftLoaded) notifyAppReady();
   }, [isSessionChecked, currentUser, allServerSynced, isDraftLoaded, isFullyLoaded]);
+  // 読み込み進捗をネイティブへ通知する（スプラッシュが5秒以上続く場合の進捗バー用）
+  const syncedCount = Object.values(serverSynced).filter(Boolean).length;
+  const loadProgress = Math.min(1, (isSessionChecked ? 0.15 : 0) + syncedCount * 0.175 + (isDraftLoaded ? 0.15 : 0));
+  useEffect(() => {
+    notifyLoadProgress(loadProgress);
+  }, [loadProgress]);
 
   useEffect(() => {
     if (redirectUser && dataLoaded.accounts) {
@@ -2592,6 +2599,12 @@ export default function App() {
           .theme-pop .bg-slate-100, .theme-pop .bg-slate-800, .theme-pop .bg-slate-50 {
             background-color: #e0f2fe !important;
           }
+          .theme-pop .bg-slate-800.text-white {
+            color: #075985 !important;
+          }
+          .theme-pop .bg-slate-800 .text-white {
+            color: #075985 !important;
+          }
           .theme-pop .nav-primary-btn.inactive {
             background-color: #0ea5e9 !important;
             border-color: #ffffff !important;
@@ -2644,7 +2657,7 @@ export default function App() {
       <header className="fixed top-0 left-0 right-0 liquid-glass-header z-30 flex flex-col transition-colors">
         <div className="px-4 py-3 flex justify-between items-center relative max-w-md mx-auto w-full">
           <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-1 tracking-tight">
-            <WithFitLogo className="text-indigo-500" /><span>With<span className="text-indigo-500">Fit</span></span>
+            <WithFitLogo className="text-[#0070C0]" /><span>With<span className="text-[#0070C0]">Fit</span></span>
           </h1>
           <div className="flex items-center gap-2.5">
             <button onClick={handleOpenNotifications} className="relative p-2 text-slate-500 dark:text-slate-300 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors">
@@ -2785,7 +2798,7 @@ export default function App() {
                              {notif.fromUser && notif.fromUser !== 'system' ? (
                                <UserAvatar userId={notif.fromUser} accountsInfo={accountsInfo} size={36} className="border-transparent" />
                              ) : (
-                               <div className="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-500 flex items-center justify-center">
+                               <div className="w-9 h-9 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-500 flex items-center justify-center">
                                  <Bell size={16} />
                                </div>
                              )}
@@ -2800,7 +2813,7 @@ export default function App() {
                                 </div>
                              )}
                              {(notif.type === 'request' || notif.type === 'joint') && (
-                                <div className="absolute -bottom-0.5 -right-0.5 bg-indigo-500 text-white w-4 h-4 rounded-full flex items-center justify-center border-[1.5px] border-white dark:border-slate-900 shadow-sm">
+                                <div className="absolute -bottom-0.5 -right-0.5 bg-blue-500 text-white w-4 h-4 rounded-full flex items-center justify-center border-[1.5px] border-white dark:border-slate-900 shadow-sm">
                                    <UserPlus size={8} />
                                 </div>
                              )}

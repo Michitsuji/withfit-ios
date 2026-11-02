@@ -15,19 +15,13 @@ final class LocalBundleServer {
         return URL(string: "http://localhost:\(port)")!
     }
 
+    // バックエンドURLは固定（旧開発者メニューの UserDefaults 上書きは廃止）。
+    // ビルド時に差し替える場合のみ Info.plist の WithFitBackendBaseURL を使う。
     var backendBaseURL: String {
-        get {
-            if let saved = UserDefaults.standard.string(forKey: "withfit_backend_url"), !saved.isEmpty {
-                return saved.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            }
-            if let plistURL = Bundle.main.object(forInfoDictionaryKey: "WithFitBackendBaseURL") as? String, !plistURL.isEmpty {
-                return plistURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            }
-            return "https://withfit.vercel.app"
+        if let plistURL = Bundle.main.object(forInfoDictionaryKey: "WithFitBackendBaseURL") as? String, !plistURL.isEmpty {
+            return plistURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
-        set {
-            UserDefaults.standard.set(newValue.trimmingCharacters(in: CharacterSet(charactersIn: "/")), forKey: "withfit_backend_url")
-        }
+        return "https://withfit.vercel.app"
     }
 
     private init() {
