@@ -32,9 +32,9 @@ import {
   syncNativeTheme,
   showNativeLocalNotification,
   checkNativePushPermission,
-  setNativeTabBarHidden,
   getApiUrl,
-  initGlobalButtonHaptics
+  initGlobalButtonHaptics,
+  notifyAppReady
 } from './nativeBridge';
 
 const VAPID_PUBLIC_KEY = 'BAty8GYk1zuoZVh-ZaSdcJsq_o-7vXJLXPNVNzlgsq9rd3wP-jQtclYEdu1MnnLN_0BnlmiKuoWH3X2YvOFl7aM';
@@ -868,29 +868,10 @@ export default function App() {
   // セッション、基本データ、下書きの全ての読み込みが完了するまでローディングとする
   const isFullyLoaded = isSessionChecked && Object.values(dataLoaded).every(Boolean) && (!currentUser || isDraftLoaded);
 
-  // 起動ロゴは最低1秒表示する（読み込みが速くても一瞬で消えないように）
-  const [splashMinElapsed, setSplashMinElapsed] = useState(false);
+  // 起動表示（ロゴの表示と開く演出）はネイティブ側が担当する。Web 側は読み込み完了だけを通知する
   useEffect(() => {
-    const t = setTimeout(() => setSplashMinElapsed(true), 1000);
-    return () => clearTimeout(t);
-  }, []);
-  const showSplash = !isFullyLoaded || !splashMinElapsed;
-  const [splashLeaving, setSplashLeaving] = useState(false);
-  const [splashGone, setSplashGone] = useState(false);
-  useEffect(() => {
-    if (!showSplash && !splashGone && !splashLeaving) {
-      setSplashLeaving(true);
-      const t = setTimeout(() => { setSplashLeaving(false); setSplashGone(true); }, 580);
-      return () => clearTimeout(t);
-    }
-  }, [showSplash, splashGone, splashLeaving]);
-
-  // 読み込みが終わるまではネイティブタブバーを隠す（ロゴのみのスプラッシュ表示にするため）
-  useEffect(() => {
-    if (isNativeIosApp()) {
-      setNativeTabBarHidden(showSplash || splashLeaving);
-    }
-  }, [showSplash, splashLeaving]);
+    if (isFullyLoaded) notifyAppReady();
+  }, [isFullyLoaded]);
 
   useEffect(() => {
     if (redirectUser && dataLoaded.accounts) {
@@ -2467,29 +2448,9 @@ export default function App() {
     }
   };
 
-  if (showSplash) {
-    // 起動ロード中はロゴのみを表示する（進捗バーや文言、タブバーは出さない）。最低1秒は表示する
-    return (
-      <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
-        <div className="flex items-center gap-3 animate-pulse">
-          <WithFitLogo size={56} className="text-indigo-500" />
-          <span className="text-4xl font-black tracking-tight text-slate-800 dark:text-white">With<span className="text-indigo-500">Fit</span></span>
-        </div>
-      </div>
-    );
-  }
-
-  const splashExitOverlay = splashLeaving ? (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-50 dark:bg-slate-950 splash-exit-bg">
-      <div className="flex items-center gap-3 splash-exit-content">
-        <WithFitLogo size={56} className="text-indigo-500" />
-        <span className="text-4xl font-black tracking-tight text-slate-800 dark:text-white">With<span className="text-indigo-500">Fit</span></span>
-      </div>
-    </div>
-  ) : null;
 
   if (!currentUser) {
-    return (<><LoginScreen onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} onSecretLogin={handleSecretLogin} isOnline={isOnline} />{splashExitOverlay}</>);
+    return <LoginScreen onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} onSecretLogin={handleSecretLogin} isOnline={isOnline} />;
   }
 
   const myFriends = myInfo.friends || [];
@@ -2527,7 +2488,6 @@ export default function App() {
 
   return (
     <div className={`ios-app-canvas min-h-screen font-sans pb-28 overflow-x-hidden select-none transition-colors duration-300 ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} ${themeContainerClass}`}>
-      {splashExitOverlay}
       <style>{`
         input, textarea, select { font-size: 16px !important; }
         .dark, .dark body { background-color: #0f172a !important; color: #f8fafc !important; }

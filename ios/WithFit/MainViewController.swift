@@ -19,6 +19,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     private var webViewConstraints: [NSLayoutConstraint] = []
     // タブバー表示状態（Web側のログイン状態と、ロード中/全画面表示中の強制非表示を合成する）
     private var isTabBarLoggedIn = false
+    private var splashView: UIView?
+    private var splashShownAt: CFTimeInterval = 0
+    private var splashDismissed = false
     private var isTabBarForceHidden = false
 
     private func refreshTabBarVisibility() {
@@ -44,6 +47,79 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         }
         loadWithFitApp()
         AdBannerManager.shared.start(in: self)
+        setupSplash()
+    }
+
+    // MARK: - Native Splash（起動表示はネイティブ側で完結させる）
+    private func setupSplash() {
+        let splash = UIView()
+        splash.backgroundColor = UIColor(named: "LaunchBackground") ?? UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
+        splash.translatesAutoresizingMaskIntoConstraints = false
+
+        let logo = UIImageView(image: UIImage(named: "SplashMark"))
+        logo.contentMode = .scaleAspectFit
+        logo.translatesAutoresizingMaskIntoConstraints = false
+
+        let withColor = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
+                : UIColor(red: 30/255, green: 41/255, blue: 59/255, alpha: 1.0)
+        }
+        let title = UILabel()
+        let attributed = NSMutableAttributedString(
+            string: "With",
+            attributes: [.font: UIFont.systemFont(ofSize: 36, weight: .black), .foregroundColor: withColor]
+        )
+        attributed.append(NSAttributedString(
+            string: "Fit",
+            attributes: [.font: UIFont.systemFont(ofSize: 36, weight: .black),
+                         .foregroundColor: UIColor(red: 99/255, green: 102/255, blue: 241/255, alpha: 1.0)]
+        ))
+        title.attributedText = attributed
+
+        let row = UIStackView(arrangedSubviews: [logo, title])
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 12
+        row.translatesAutoresizingMaskIntoConstraints = false
+        splash.addSubview(row)
+
+        view.addSubview(splash)
+        view.bringSubviewToFront(splash)
+        NSLayoutConstraint.activate([
+            splash.topAnchor.constraint(equalTo: view.topAnchor),
+            splash.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            splash.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            splash.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            row.centerXAnchor.constraint(equalTo: splash.centerXAnchor),
+            row.centerYAnchor.constraint(equalTo: splash.centerYAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 60),
+            logo.heightAnchor.constraint(equalToConstant: 49)
+        ])
+        splashView = splash
+        splashShownAt = CACurrentMediaTime()
+        // Web 側から準備完了が来ない場合の保険（6秒で自動的に開く）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
+            self?.dismissSplash()
+        }
+    }
+
+    private func dismissSplash() {
+        guard !splashDismissed, let splash = splashView else { return }
+        splashDismissed = true
+        let elapsed = CACurrentMediaTime() - splashShownAt
+        let wait = max(0, 1.0 - elapsed)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            UIView.animate(withDuration: 0.45, delay: 0, options: [.curveEaseIn]) {
+                splash.transform = CGAffineTransform(scaleX: 1.9, y: 1.9)
+            }
+            UIView.animate(withDuration: 0.14, delay: 0.31, options: [.curveEaseIn], animations: {
+                splash.alpha = 0
+            }, completion: { _ in
+                splash.removeFromSuperview()
+                if self.splashView === splash { self.splashView = nil }
+            })
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -218,6 +294,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         guard let payload = dict, let type = payload["type"] as? String else { return }
 
         switch type {
+        case "APP_READY":
+            dismissSplash()
+
         case "HAPTIC":
             let style = payload["style"] as? String ?? "light"
             NativeAudioAndTimerManager.shared.triggerHaptic(style: style)

@@ -32,6 +32,11 @@ export function postNativeMessage(payload) {
 // iOS Taptic Engine 触覚フィードバック
 let lastHapticAt = 0;
 
+// 起動時の読み込み完了をネイティブへ通知する（起動表示はネイティブ側が担当）
+export function notifyAppReady() {
+  postNativeMessage({ type: 'APP_READY' });
+}
+
 let globalButtonHapticsInitialized = false;
 
 // 全ての <button> に共通の触覚フィードバックを付ける（App 起動時に一度だけ呼ぶ）。
