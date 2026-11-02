@@ -80,7 +80,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             logo.heightAnchor.constraint(equalToConstant: 49)
         ])
 
-        // 長時間ロード用: スプラッシュ表示が5秒を超えたら進捗バーを出す
+        // 進捗バー（表示の要否は Web 側の概算 LOAD_ESTIMATE で決まる）
         let progressView = UIProgressView(progressViewStyle: .bar)
         progressView.trackTintColor = UIColor(red: 203/255, green: 213/255, blue: 225/255, alpha: 1.0)
         progressView.progressTintColor = UIColor(red: 0/255, green: 112/255, blue: 192/255, alpha: 1.0)
@@ -96,9 +96,8 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             progressView.heightAnchor.constraint(equalToConstant: 4)
         ])
         splashProgressView = progressView
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-            self?.showSplashProgressIfNeeded()
-        }
+        // 表示するかどうかは Web 側の概算（LOAD_ESTIMATE）で決まる。
+        // 長くなりそうな時だけ最初から表示し、短く済む時は出さない。
         splashView = splash
         splashShownAt = CACurrentMediaTime()
         // Web 側から準備完了が来ない場合の保険（6秒で自動的に開く）
@@ -323,6 +322,11 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         switch type {
         case "APP_READY":
             dismissSplash()
+
+        case "LOAD_ESTIMATE":
+            if let show = payload["showBar"] as? Bool, show {
+                showSplashProgressIfNeeded()
+            }
 
         case "LOAD_PROGRESS":
             if let v = payload["value"] as? Double {
@@ -592,7 +596,7 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 self.view.backgroundColor = UIColor(red: 248/255, green: 250/255, blue: 252/255, alpha: 1.0)
                 self.currentStatusBarStyle = .darkContent
                 self.overrideUserInterfaceStyle = .light
-                self.tabBar.tintColor = UIColor(red: 79/255, green: 70/255, blue: 229/255, alpha: 1.0)
+                self.tabBar.tintColor = UIColor(red: 0/255, green: 112/255, blue: 192/255, alpha: 1.0)
             }
             self.setNeedsStatusBarAppearanceUpdate()
         }

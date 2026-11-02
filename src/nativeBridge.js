@@ -37,6 +37,11 @@ export function notifyAppReady() {
   postNativeMessage({ type: 'APP_READY' });
 }
 
+// 起動直後の概算で「進捗バーを最初から表示すべきか」をネイティブへ通知する
+export function notifyLoadEstimate(showBar) {
+  postNativeMessage({ type: 'LOAD_ESTIMATE', showBar: Boolean(showBar) });
+}
+
 // 起動時の読み込み進捗（0〜1）をネイティブへ通知する（長時間ロード時の進捗バー用）
 export function notifyLoadProgress(value) {
   postNativeMessage({ type: 'LOAD_PROGRESS', value });

@@ -36,7 +36,8 @@ import {
   getApiUrl,
   initGlobalButtonHaptics,
   notifyAppReady,
-  notifyLoadProgress
+  notifyLoadProgress,
+  notifyLoadEstimate
 } from './nativeBridge';
 
 // 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
@@ -894,7 +895,21 @@ export default function App() {
     }
     if (allServerSynced && isDraftLoaded) notifyAppReady();
   }, [isSessionChecked, currentUser, allServerSynced, isDraftLoaded, isFullyLoaded]);
-  // 読み込み進捗をネイティブへ通知する（スプラッシュが5秒以上続く場合の進捗バー用）
+  // 起動直後に、キャッシュの有無とデータ件数から所要時間を概算し、明らかに長く
+  // なりそうな場合だけ「進捗バーを最初から表示する」ようネイティブへ伝える
+  const loadEstimateSentRef = useRef(false);
+  useEffect(() => {
+    if (loadEstimateSentRef.current) return;
+    loadEstimateSentRef.current = true;
+    const cachedPosts = (boot.posts || []).length;
+    const cachedAccounts = Object.keys(boot.accountsInfo || {}).length;
+    const hasCache = Boolean(boot.userId) && (cachedPosts > 0 || cachedAccounts > 0);
+    // キャッシュ無し（初回ログイン等）は全件ダウンロードで時間がかかる。
+    // キャッシュありでも投稿件数が多いとサーバーとの差分確認に時間がかかる、として概算する
+    const estimatedMs = !hasCache ? 8000 : 1000 + cachedPosts * 30 + cachedAccounts * 100;
+    notifyLoadEstimate(estimatedMs >= 4000);
+  }, []);
+  // 読み込み進捗をネイティブへ通知する（進捗バー表示中は実進捗を反映する）
   const syncedCount = Object.values(serverSynced).filter(Boolean).length;
   const loadProgress = Math.min(1, (isSessionChecked ? 0.15 : 0) + syncedCount * 0.175 + (isDraftLoaded ? 0.15 : 0));
   useEffect(() => {
