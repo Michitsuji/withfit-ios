@@ -11,7 +11,7 @@ const FIREBASE_PROJECT_ID = "duofit-app-75cb2";
 
 try {
   const firebaseConfig = {
-    apiKey: "AIzaSyDQTfLhyuc8PEoMtw-FvEq4k9HShRJz_io",
+    apiKey: "AIzaSyAb2qyieNxcnStpI94ETyD9HDtPseOYwd8",
     authDomain: "duofit-app-75cb2.firebaseapp.com",
     projectId: "duofit-app-75cb2",
     storageBucket: "duofit-app-75cb2.firebasestorage.app",
