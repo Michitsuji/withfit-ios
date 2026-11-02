@@ -44,6 +44,15 @@ service cloud.firestore {
           allow delete: if isSelf(username, resource.data);
         }
 
+        // ---- フレンド専用共有（体重・年齢のみ。本人とフレンドだけが読める） ----
+        match /friendShared/{username} {
+          allow read: if isSelf(username, resource != null ? resource.data : null)
+            || (signedIn() && myUsername() != ''
+                && get(/databases/$(database)/documents/artifacts/$(appId)/public/data/accounts/$(username)).data.get('friends', []).hasAny([myUsername()]));
+          allow create, update: if isSelf(username, request.resource.data);
+          allow delete: if isSelf(username, resource.data);
+        }
+
         // ---- 認証UID → ユーザー名の対応表 ----
         match /uidMap/{uid} {
           allow read: if signedIn() && request.auth.uid == uid;
@@ -96,7 +105,7 @@ service cloud.firestore {
         // ---- その他のコレクションは従来どおりログイン必須 ----
         match /{collection}/{docId} {
           allow read, write: if signedIn()
-            && !(collection in ['accounts', 'privateAccounts', 'uidMap', 'workouts', 'contentReports', 'bugReports']);
+            && !(collection in ['accounts', 'privateAccounts', 'friendShared', 'uidMap', 'workouts', 'contentReports', 'bugReports']);
         }
 
         // 深いパスは不許可

@@ -8,7 +8,7 @@ import { GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithCust
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
 import { db, appId, auth, app } from './firebase';
-import { generateId, generateFriendCode, calculateWorkoutTotals, getRelativeTime } from './utils';
+import { generateId, generateFriendCode, calculateWorkoutTotals, getRelativeTime, getAge } from './utils';
 import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, LiquidGlassTabBar } from './CommonUI';
 import { TimelineView, WorkoutCard } from './WorkoutCard';
 import { EditWorkoutModal } from './WorkoutForm';
@@ -44,7 +44,7 @@ import {
 // 他ユーザーのアカウント情報から、認証情報・端末トークンを取り除く。
 // accountsInfo は全ユーザー分を読み込むため、そのままだと全員のフレンドコード・
 // 生年月日（=ログイン情報）とプッシュ用トークンが全クライアントに渡ってしまう。
-const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email', 'weight'];
+const SENSITIVE_ACCOUNT_FIELDS = ['friendCode', 'birthDate', 'fcmTokens', 'fcmToken', 'googleUid', 'email'];
 function sanitizeAccountsMap(map) {
   try {
     if (!map || typeof map !== 'object') return map;
@@ -1295,6 +1295,7 @@ export default function App() {
 
   const exercisesByChunkRef = useRef({});
   const myPrivateRef = useRef({});
+  const friendSharedRef = useRef({});
 
   useEffect(() => {
     if (!db) return;
@@ -1441,6 +1442,21 @@ export default function App() {
     setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'uidMap', firebaseUser.uid), { username: currentUser }, { merge: true }).catch(() => {});
   }, [db, currentUser, firebaseUser]);
 
+  // フレンド専用棚（体重・年齢）を自分の最新プロフィールで維持する。
+  // 生年月日そのものは渡さず、年齢だけを置く（フレンドの体組成計算用）
+  const shelfWriteRef = useRef('');
+  const myWeight = accountsInfo[currentUser]?.weight;
+  const myBirthDate = accountsInfo[currentUser]?.birthDate;
+  useEffect(() => {
+    if (!db || !currentUser) return;
+    const weight = myWeight ?? null;
+    const age = myBirthDate ? getAge(myBirthDate) : null;
+    const payload = JSON.stringify({ weight, age });
+    if (shelfWriteRef.current === payload) return;
+    shelfWriteRef.current = payload;
+    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'friendShared', currentUser), { weight, age }, { merge: true }).catch(() => {});
+  }, [db, currentUser, myWeight, myBirthDate]);
+
   useEffect(() => {
     if (!db || !currentUser || !accountsInfo[currentUser]) return;
     const myFriends = accountsInfo[currentUser].friends || [];
@@ -1454,7 +1470,7 @@ export default function App() {
        const fRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', fId);
        unsubs.push(onSnapshot(fRef, (docSnap) => {
           if (docSnap.exists()) {
-             const fData = docSnap.data();
+             const fData = { ...docSnap.data(), ...(friendSharedRef.current[fId] || {}) };
              const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [fId]: fData });
              if (diff.hasChanges) {
                 setAccountsInfo(diff.map);
@@ -1462,6 +1478,23 @@ export default function App() {
              }
           }
        }));
+       // フレンド専用棚（体重・年齢）はフレンド分だけ購読し、アカウント情報へマージする
+       if (myFriends.includes(fId)) {
+          const sRef = doc(db, 'artifacts', appId, 'public', 'data', 'friendShared', fId);
+          unsubs.push(onSnapshot(sRef, (sSnap) => {
+             const sData = sSnap.exists() ? sSnap.data() : {};
+             friendSharedRef.current = { ...friendSharedRef.current, [fId]: sData };
+             const base = localCacheRef.current.accountsInfo[fId];
+             if (base) {
+                const merged = { ...base, ...sData };
+                const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [fId]: merged });
+                if (diff.hasChanges) {
+                   setAccountsInfo(diff.map);
+                   persistLocalSnapshot({ accountsInfo: diff.map }, diff);
+                }
+             }
+          }, () => {}));
+       }
     });
     return () => unsubs.forEach(u => u());
   }, [db, currentUser, accountsInfo[currentUser]?.friends?.join(','), accountsInfo[currentUser]?.friendRequests?.join(','), accountsInfo[currentUser]?.partnerRequests?.join(','), accountsInfo[currentUser]?.jointTrainingRequests?.join(',')]);
@@ -1884,9 +1917,9 @@ export default function App() {
 
       if (jointPartnerId && partnerItems) {
          const pInfo = accountsInfo[jointPartnerId];
-         // パートナーのプロフィール体重は非公開のため、最新の投稿体重で代用する
+         // パートナーの体重はフレンド専用棚（プロフィール体重）優先、無ければ最新の投稿体重で代用する
          const pLatestPost = posts.find(p => p.author === jointPartnerId && p.bodyWeight && !isNaN(p.bodyWeight));
-         const pBaseWeight = Number(pLatestPost?.bodyWeight) || Number(pInfo?.weight) || 60;
+         const pBaseWeight = Number(pInfo?.weight) || Number(pLatestPost?.bodyWeight) || 60;
          const pCalc = calculateWorkoutTotals(partnerItems, duration, pBaseWeight);
          const pTotalSets = pCalc.processedItems.reduce((acc, it) => acc + (it.sets?.length || 0), 0);
          const pDocId = `workout_${generateId()}`;

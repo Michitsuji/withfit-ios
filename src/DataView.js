@@ -94,8 +94,8 @@ function MonthlyReport({ monthDate, posts, userName, accountsInfo, onUserClick }
 
 // --- 体組成バッジコンポーネント ---
 function BodyCompositionInfo({ info, dailyCalories = 0, dateLabel = '' }) {
-  if (!info.height || !info.weight || !info.birthDate) return null;
-  const age = getAge(info.birthDate);
+  if (!info.height || !info.weight || (!info.birthDate && info.age == null)) return null;
+  const age = info.age != null ? Number(info.age) : getAge(info.birthDate);
   const bmr = getBMR(info.weight, info.height, age, info.gender);
   const totalCalories = bmr + dailyCalories;
   
@@ -489,7 +489,7 @@ function ExerciseChartModal({ exercise, posts, accountsInfo, onClose, currentUse
       let totalTime = 0;
       let bestSetText = '';
       let matched = false;
-      const baseWeight = Number(p.bodyWeight) || latestPostWeight[p.author] || Number(accountsInfo?.[p.author]?.weight) || 60;
+      const baseWeight = Number(p.bodyWeight) || Number(accountsInfo?.[p.author]?.weight) || latestPostWeight[p.author] || 60;
 
       const checkSet = (wRaw, rRaw, wType, rawSet) => {
         if (wType === 'cardio' || isCardio) {
