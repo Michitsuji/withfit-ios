@@ -467,6 +467,14 @@ function ExerciseChartModal({ exercise, posts, accountsInfo, onClose, currentUse
     const dayMap = {};
     const authorsSet = new Set();
 
+    // プロフィール体重は非公開化されたため、他ユーザーの換算には本人の最新の投稿体重で代用する
+    const latestPostWeight = {};
+    posts.forEach(p => {
+      if (p.author && p.bodyWeight && !isNaN(p.bodyWeight) && latestPostWeight[p.author] === undefined) {
+        latestPostWeight[p.author] = Number(p.bodyWeight);
+      }
+    });
+
     posts.forEach(p => {
       if (!p.date && !p.timestamp) return;
       const time = new Date(p.date || p.timestamp).getTime();
@@ -481,7 +489,7 @@ function ExerciseChartModal({ exercise, posts, accountsInfo, onClose, currentUse
       let totalTime = 0;
       let bestSetText = '';
       let matched = false;
-      const baseWeight = Number(p.bodyWeight) || Number(accountsInfo?.[p.author]?.weight) || 60;
+      const baseWeight = Number(p.bodyWeight) || latestPostWeight[p.author] || Number(accountsInfo?.[p.author]?.weight) || 60;
 
       const checkSet = (wRaw, rRaw, wType, rawSet) => {
         if (wType === 'cardio' || isCardio) {

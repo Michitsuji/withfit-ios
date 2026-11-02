@@ -1884,7 +1884,9 @@ export default function App() {
 
       if (jointPartnerId && partnerItems) {
          const pInfo = accountsInfo[jointPartnerId];
-         const pBaseWeight = Number(pInfo?.weight) || 60;
+         // パートナーのプロフィール体重は非公開のため、最新の投稿体重で代用する
+         const pLatestPost = posts.find(p => p.author === jointPartnerId && p.bodyWeight && !isNaN(p.bodyWeight));
+         const pBaseWeight = Number(pLatestPost?.bodyWeight) || Number(pInfo?.weight) || 60;
          const pCalc = calculateWorkoutTotals(partnerItems, duration, pBaseWeight);
          const pTotalSets = pCalc.processedItems.reduce((acc, it) => acc + (it.sets?.length || 0), 0);
          const pDocId = `workout_${generateId()}`;
