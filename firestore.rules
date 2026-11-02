@@ -1,22 +1,116 @@
 rules_version = '2';
 
-// WithFit Firestore セキュリティルール
+// WithFit Firestore セキュリティルール（所有権対応版）
 // 方針:
-// - アプリのデータ（artifacts/withfit-app/public/data 配下）は「ログイン済み
-//   セッションがある場合のみ」読み書き可。未認証の第三者からは一切触れない。
-// - private 配下はクライアントからは読み書き不可（サーバーの Admin SDK 専用）。
-// - それ以外は全て拒否。
-// 注意: これは第一段階の締め付け。ユーザー単位の厳密な所有権チェックは、
-// フレンドコードログインのカスタムトークン化（uid = ユーザー名）が全員に
-// 行き渡った後に第二段階として導入する。
+// - privateAccounts/{ユーザー名} はログイン情報（フレンドコード・生年月日・PIN）と
+//   端末トークンの置き場所で、本人だけが読み書きできる
+// - accounts/{ユーザー名} は公開プロフィール。読むのは全ユーザー、書くのは本人と
+//   フレンド関係まわりの差分だけに限る
+// - workouts は投稿者本人か、いいね・コメントだけの変更なら他ユーザーも可
+// - uidMap は「認証UID → ユーザー名」の対応表。登録済みの googleUid / appleUid と
+//   一致する場合だけ書ける（自己申告での乗っ取りを防ぐ）
+// - 通報・不具合報告は作成は全員、閲覧と対応はマスター（ゆうた）のみ
+// - それ以外のコレクションは従来どおりログイン必須
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /artifacts/{appId}/public/data/{document=**} {
-      allow read, write: if request.auth != null;
+
+    function signedIn() {
+      return request.auth != null;
     }
-    match /artifacts/{appId}/private/data/{document=**} {
-      allow read, write: if false;
+
+    match /artifacts/{appId} {
+      match /public/data {
+
+        function myUsername() {
+          let p = /databases/$(database)/documents/artifacts/$(appId)/public/data/uidMap/$(request.auth.uid);
+          return exists(p) ? get(p).data.get('username', '') : '';
+        }
+
+        function isSelf(username, data) {
+          return signedIn() && (
+            request.auth.uid == username
+            || myUsername() == username
+            || (data != null && data.get('googleUid', '') == request.auth.uid)
+            || (data != null && data.get('appleUid', '') == request.auth.uid)
+          );
+        }
+
+        // ---- 秘密情報（本人のみ） ----
+        match /privateAccounts/{username} {
+          allow read: if isSelf(username, resource != null ? resource.data : null);
+          allow create: if isSelf(username, request.resource.data);
+          allow update: if isSelf(username, resource.data);
+          allow delete: if isSelf(username, resource.data);
+        }
+
+        // ---- 認証UID → ユーザー名の対応表 ----
+        match /uidMap/{uid} {
+          allow read: if signedIn() && request.auth.uid == uid;
+          allow create, update: if signedIn() && request.auth.uid == uid && (
+            request.resource.data.get('username', '') == request.auth.uid
+            || get(/databases/$(database)/documents/artifacts/$(appId)/public/data/accounts/$(request.resource.data.get('username', ''))).data.get('googleUid', '') == uid
+            || get(/databases/$(database)/documents/artifacts/$(appId)/public/data/accounts/$(request.resource.data.get('username', ''))).data.get('appleUid', '') == uid
+            || get(/databases/$(database)/documents/artifacts/$(appId)/public/data/privateAccounts/$(request.resource.data.get('username', ''))).data.get('googleUid', '') == uid
+            || get(/databases/$(database)/documents/artifacts/$(appId)/public/data/privateAccounts/$(request.resource.data.get('username', ''))).data.get('appleUid', '') == uid
+          );
+          allow delete: if signedIn() && request.auth.uid == uid;
+        }
+
+        // ---- アカウント（公開プロフィール） ----
+        match /accounts/{username} {
+          allow read: if signedIn();
+          allow create: if isSelf(username, request.resource.data);
+          allow update: if isSelf(username, resource.data)
+            || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+                 ['friends', 'friendRequests', 'sentRequests', 'partnerRequests',
+                  'jointTrainingRequests', 'partnerId', 'enablePartner', 'blockedUsers']));
+          allow delete: if isSelf(username, resource.data);
+        }
+
+        // ---- トレーニング投稿 ----
+        match /workouts/{postId} {
+          allow read: if signedIn();
+          allow create: if signedIn() && (
+            request.resource.data.get('author', '') == request.auth.uid
+            || request.resource.data.get('author', '') == myUsername());
+          allow update: if signedIn() && (
+            resource.data.get('author', '') == request.auth.uid
+            || resource.data.get('author', '') == myUsername()
+            || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likedUsers', 'comments']));
+          allow delete: if signedIn() && (
+            resource.data.get('author', '') == request.auth.uid
+            || resource.data.get('author', '') == myUsername());
+        }
+
+        // ---- 通報 / 不具合報告（マスターのみ閲覧・対応） ----
+        match /contentReports/{docId} {
+          allow create: if signedIn();
+          allow read, update, delete: if signedIn() && (request.auth.uid == 'ゆうた' || myUsername() == 'ゆうた');
+        }
+        match /bugReports/{docId} {
+          allow create: if signedIn();
+          allow read, update, delete: if signedIn() && (request.auth.uid == 'ゆうた' || myUsername() == 'ゆうた');
+        }
+
+        // ---- その他のコレクションは従来どおりログイン必須 ----
+        match /{collection}/{docId} {
+          allow read, write: if signedIn()
+            && !(collection in ['accounts', 'privateAccounts', 'uidMap', 'workouts', 'contentReports', 'bugReports']);
+        }
+
+        // 深いパスは不許可
+        match /{collection}/{docId}/{document=**} {
+          allow read, write: if false;
+        }
+      }
+
+      // アプリのユーザーデータ領域（現行アプリでは未使用だが従来ルールを維持）
+      match /users/{userId}/{document=**} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
     }
+
     match /{document=**} {
       allow read, write: if false;
     }

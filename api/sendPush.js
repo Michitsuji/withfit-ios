@@ -296,6 +296,47 @@ async function verifyFirebaseIdToken(idToken, projectId) {
   return payload;
 }
 
+// ------------------------------------------
+// 配信の共通処理（トークン配列 → APNs/FCM 振り分け）
+// ------------------------------------------
+async function deliverTokens(tokens, safeTitle, safeBody, safeData) {
+  const invalidTokens = [];
+  const results = await Promise.allSettled(
+    tokens.map(async (token) => {
+      const kind = classifyToken(token);
+      if (kind === 'invalid') {
+        invalidTokens.push(token);
+        throw new Error('Placeholder token is not deliverable');
+      }
+      const result = kind === 'apns'
+        ? await sendViaApns(token, safeTitle, safeBody, safeData)
+        : await sendViaFcm(token, safeTitle, safeBody, safeData);
+      if (!result.ok) {
+        if (result.invalid) invalidTokens.push(token);
+        throw new Error(result.reason || 'Send failed');
+      }
+      return result;
+    })
+  );
+  return {
+    successCount: results.filter(r => r.status === 'fulfilled').length,
+    failureCount: results.filter(r => r.status === 'rejected').length,
+    invalidTokens,
+  };
+}
+
+function buildSafeData(data, safeTitle, safeBody) {
+  const safeData = {};
+  if (data && typeof data === 'object') {
+    Object.entries(data).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) safeData[k] = String(v);
+    });
+  }
+  safeData.title = safeTitle;
+  safeData.body = safeBody;
+  return safeData;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -309,104 +350,130 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ message: 'Method Not Allowed' });
   }
 
-  // 認証必須: アプリユーザーの Firebase ID トークンを検証する（オープンな中継にしない）
   const idToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  try {
-    if (!idToken) throw new Error('missing token');
-    await verifyFirebaseIdToken(idToken, process.env.FIREBASE_PROJECT_ID);
-  } catch (e) {
-    return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+  // ------------------------------------------
+  // 新方式（ネイティブ版）: IDトークン認証＋送信先ユーザー指定
+  // ------------------------------------------
+  if (idToken) {
+    try {
+      await verifyFirebaseIdToken(idToken, process.env.FIREBASE_PROJECT_ID);
+    } catch (e) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { targetUserId, title, body, data } = req.body || {};
+    if (!targetUserId || typeof targetUserId !== 'string') {
+      return res.status(400).json({ success: false, message: 'targetUserId is required' });
+    }
+
+    // 送信先トークンはサーバー側で解決する。秘密情報の分離後は privateAccounts が正だが、
+    // 移行期間中は accounts 側にも残るため両方を union する
+    let tokens = [];
+    try {
+      const { getFirestore } = require('firebase-admin/firestore');
+      const db = getFirestore();
+      const [privSnap, accSnap] = await Promise.all([
+        db.doc(`artifacts/withfit-app/public/data/privateAccounts/${targetUserId}`).get(),
+        db.doc(`artifacts/withfit-app/public/data/accounts/${targetUserId}`).get()
+      ]);
+      const collect = (d) => d && d.exists ? [
+        ...(Array.isArray((d.data() || {}).fcmTokens) ? d.data().fcmTokens : []),
+        (d.data() || {}).fcmToken
+      ] : [];
+      tokens = [...new Set([...collect(privSnap), ...collect(accSnap)]
+        .filter(t => typeof t === 'string' && t.trim().length > 0))];
+    } catch (e) {
+      console.error('Token lookup failed:', e);
+    }
+
+    if (tokens.length === 0) {
+      return res.status(200).json({ success: false, successCount: 0, failureCount: 0, invalidTokens: [], message: 'No device tokens for target user' });
+    }
+
+    const safeTitle = title || 'WithFit';
+    const safeBody = body || '';
+    const safeData = buildSafeData(data, safeTitle, safeBody);
+
+    try {
+      const { successCount, failureCount, invalidTokens } = await deliverTokens(tokens, safeTitle, safeBody, safeData);
+
+      // 無効トークンの掃除もサーバー側で行う（privateAccounts と accounts の両方から除去）
+      if (invalidTokens.length > 0) {
+        try {
+          const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+          const db2 = getFirestore();
+          for (const collName of ['privateAccounts', 'accounts']) {
+            const ref = db2.doc(`artifacts/withfit-app/public/data/${collName}/${targetUserId}`);
+            const snap2 = await ref.get();
+            if (snap2.exists) {
+              const acc2 = snap2.data() || {};
+              const current = [...new Set([
+                ...(Array.isArray(acc2.fcmTokens) ? acc2.fcmTokens : []),
+                acc2.fcmToken
+              ].filter(t => typeof t === 'string' && t.trim().length > 0))];
+              if (current.some(t => invalidTokens.includes(t))) {
+                const valid = current.filter(t => !invalidTokens.includes(t));
+                await ref.update({
+                  fcmTokens: valid,
+                  fcmToken: valid.length > 0 ? valid[valid.length - 1] : FieldValue.delete()
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Token cleanup failed:', e);
+        }
+      }
+
+      return res.status(200).json({ success: successCount > 0, successCount, failureCount, invalidTokens });
+    } catch (error) {
+      console.error('Error sending push message:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
   }
 
-  const { targetUserId, title, body, data } = req.body || {};
-  if (!targetUserId || typeof targetUserId !== 'string') {
-    return res.status(400).json({ success: false, message: 'targetUserId is required' });
+  // ------------------------------------------
+  // レガシー互換（PWA 旧クライアント: トークン直接指定）
+  // オープンな中継にしないため、アカウントに登録済みのトークンにだけ配信する
+  // ------------------------------------------
+  const { targetToken, targetTokens, title, body, data } = req.body || {};
+  const rawTokens = Array.isArray(targetTokens) ? [...targetTokens, targetToken] : [targetToken];
+  const tokens = [...new Set(rawTokens.filter(t => typeof t === 'string' && t.trim().length > 0))];
+  if (tokens.length === 0) {
+    return res.status(400).json({ success: false, message: 'targetUserId or token is required' });
   }
 
-  // 送信先トークンはサーバー側でアカウント情報から解決する。
-  // クライアントからトークンを受け取る方式は、誰でも任意の端末に送れてしまうため廃止。
-  let tokens = [];
+  let registered = new Set();
   try {
     const { getFirestore } = require('firebase-admin/firestore');
-    const accSnap = await getFirestore().doc(`artifacts/withfit-app/public/data/accounts/${targetUserId}`).get();
-    if (accSnap.exists) {
-      const acc = accSnap.data() || {};
-      tokens = [...new Set([
-        ...(Array.isArray(acc.fcmTokens) ? acc.fcmTokens : []),
-        acc.fcmToken
-      ].filter(t => typeof t === 'string' && t.trim().length > 0))];
+    const db3 = getFirestore();
+    for (const collName of ['accounts', 'privateAccounts']) {
+      const snap = await db3.collection(`artifacts/withfit-app/public/data/${collName}`).get();
+      snap.forEach(d => {
+        const a = d.data() || {};
+        [...(Array.isArray(a.fcmTokens) ? a.fcmTokens : []), a.fcmToken].forEach(t => {
+          if (typeof t === 'string' && t.trim().length > 0) registered.add(t);
+        });
+      });
     }
   } catch (e) {
-    console.error('Token lookup failed:', e);
+    console.error('Registered token lookup failed:', e);
+    return res.status(500).json({ success: false, error: 'token lookup failed' });
   }
 
-  if (tokens.length === 0) {
-    return res.status(200).json({ success: false, successCount: 0, failureCount: 0, invalidTokens: [], message: 'No device tokens for target user' });
+  const allowed = tokens.filter(t => registered.has(t));
+  if (allowed.length === 0) {
+    return res.status(200).json({ success: false, successCount: 0, failureCount: 0, invalidTokens: [], message: 'No registered tokens' });
   }
 
   const safeTitle = title || 'WithFit';
   const safeBody = body || '';
-  const safeData = {};
-  if (data && typeof data === 'object') {
-    Object.entries(data).forEach(([k, v]) => {
-      if (v !== undefined && v !== null) safeData[k] = String(v);
-    });
-  }
-  safeData.title = safeTitle;
-  safeData.body = safeBody;
+  const safeData = buildSafeData(data, safeTitle, safeBody);
 
   try {
-    const invalidTokens = [];
-    const results = await Promise.allSettled(
-      tokens.map(async (token) => {
-        const kind = classifyToken(token);
-        if (kind === 'invalid') {
-          invalidTokens.push(token);
-          throw new Error('Placeholder token is not deliverable');
-        }
-        const result = kind === 'apns'
-          ? await sendViaApns(token, safeTitle, safeBody, safeData)
-          : await sendViaFcm(token, safeTitle, safeBody, safeData);
-        if (!result.ok) {
-          if (result.invalid) invalidTokens.push(token);
-          throw new Error(result.reason || 'Send failed');
-        }
-        return result;
-      })
-    );
-
-    const successCount = results.filter(r => r.status === 'fulfilled').length;
-    const failureCount = results.length - successCount;
-
-    // 無効トークンの掃除もサーバー側で行う（クライアントは他人のトークンを持たない）
-    if (invalidTokens.length > 0) {
-      try {
-        const { getFirestore, FieldValue } = require('firebase-admin/firestore');
-        const ref = getFirestore().doc(`artifacts/withfit-app/public/data/accounts/${targetUserId}`);
-        const snap2 = await ref.get();
-        if (snap2.exists) {
-          const acc2 = snap2.data() || {};
-          const current = [...new Set([
-            ...(Array.isArray(acc2.fcmTokens) ? acc2.fcmTokens : []),
-            acc2.fcmToken
-          ].filter(t => typeof t === 'string' && t.trim().length > 0))];
-          const valid = current.filter(t => !invalidTokens.includes(t));
-          await ref.update({
-            fcmTokens: valid,
-            fcmToken: valid.length > 0 ? valid[valid.length - 1] : FieldValue.delete()
-          });
-        }
-      } catch (e) {
-        console.warn('Token cleanup failed:', e);
-      }
-    }
-
-    return res.status(200).json({
-      success: successCount > 0,
-      successCount,
-      failureCount,
-      invalidTokens,
-    });
+    const { successCount, failureCount, invalidTokens } = await deliverTokens(allowed, safeTitle, safeBody, safeData);
+    return res.status(200).json({ success: successCount > 0, successCount, failureCount, invalidTokens });
   } catch (error) {
     console.error('Error sending push message:', error);
     return res.status(500).json({ success: false, error: error.message });

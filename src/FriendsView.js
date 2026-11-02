@@ -398,7 +398,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
                         const tCount = Array.isArray(acc?.fcmTokens) ? acc.fcmTokens.length : (acc?.fcmToken ? 1 : 0);
                         return (
                           <option key={f} value={f}>
-                            {acc?.displayName || f}{f === currentUser ? ' (自分)' : ''} — {tCount > 0 ? `Push登録:${tCount}台` : 'アプリ内通知のみ'}
+                            {acc?.displayName || f}{f === currentUser ? ` (自分) — ${tCount > 0 ? `Push登録:${tCount}台` : 'アプリ内通知のみ'}` : ''}
                           </option>
                         );
                       })}

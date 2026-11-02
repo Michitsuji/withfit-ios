@@ -108,21 +108,34 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const snap = await getFirestore()
-      .collection('artifacts/withfit-app/public/data/accounts')
+    const db = getFirestore();
+    // 秘密情報の分離後は privateAccounts が正。移行期間中は accounts 側にも残るため両方を見る
+    let username = null;
+    let matchedBirthDate = null;
+    const privSnap = await db
+      .collection('artifacts/withfit-app/public/data/privateAccounts')
       .where('friendCode', '==', cleanCode)
       .limit(1)
       .get();
-    if (snap.empty) {
+    if (!privSnap.empty) {
+      username = privSnap.docs[0].id;
+      matchedBirthDate = (privSnap.docs[0].data() || {}).birthDate;
+    } else {
+      const snap = await db
+        .collection('artifacts/withfit-app/public/data/accounts')
+        .where('friendCode', '==', cleanCode)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        username = snap.docs[0].id;
+        matchedBirthDate = (snap.docs[0].data() || {}).birthDate;
+      }
+    }
+    if (!username || !matchedBirthDate || matchedBirthDate !== birthDate) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const docSnap = snap.docs[0];
-    const data = docSnap.data() || {};
-    if (!data.birthDate || data.birthDate !== birthDate) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-    const token = createFirebaseCustomToken(docSnap.id);
-    return res.status(200).json({ token, username: docSnap.id });
+    const token = createFirebaseCustomToken(username);
+    return res.status(200).json({ token, username });
   } catch (e) {
     console.error('friendLogin error:', e);
     return res.status(500).json({ error: 'Internal error' });

@@ -187,15 +187,19 @@ export default function App() {
       }
       setDeviceFcmToken(token);
 
-      const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username);
-      const snap = await getDoc(userRef);
-      const existingData = snap.exists() ? snap.data() : {};
-      const existingTokens = Array.isArray(existingData.fcmTokens)
-        ? existingData.fcmTokens
-        : (existingData.fcmToken ? [existingData.fcmToken] : []);
+      // トークンは秘密情報として privateAccounts に保存する（移行期間中は accounts 側の既存分も合算）
+      const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username);
+      const accRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username);
+      const [privSnap, accSnap] = await Promise.all([getDoc(privRef), getDoc(accRef).catch(() => null)]);
+      const existingData = privSnap.exists() ? privSnap.data() : {};
+      const accData = accSnap && accSnap.exists() ? accSnap.data() : {};
+      const existingTokens = [...new Set([
+        ...(Array.isArray(existingData.fcmTokens) ? existingData.fcmTokens : (existingData.fcmToken ? [existingData.fcmToken] : [])),
+        ...(Array.isArray(accData.fcmTokens) ? accData.fcmTokens : (accData.fcmToken ? [accData.fcmToken] : []))
+      ])];
       const mergedTokens = [...new Set([...existingTokens.filter(t => t && t !== 'ios_native_local_notification_enabled'), token])].slice(-5);
 
-      await setDoc(userRef, {
+      await setDoc(privRef, {
         fcmToken: token,
         fcmTokens: mergedTokens,
         fcmTokenUpdatedAt: Date.now()
@@ -210,23 +214,27 @@ export default function App() {
     if (!username || !db) return;
     const localToken = typeof window !== 'undefined' ? localStorage.getItem(DEVICE_TOKEN_STORAGE_KEY) : deviceFcmToken;
     try {
-      const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username);
-      const snap = await getDoc(userRef);
-      if (snap.exists()) {
-        const data = snap.data();
-        const existingTokens = Array.isArray(data.fcmTokens)
-          ? data.fcmTokens
-          : (data.fcmToken ? [data.fcmToken] : []);
-        const remainingTokens = localToken
-          ? existingTokens.filter(t => t && t !== localToken)
-          : [];
-        const nextPrimary = remainingTokens.length > 0 ? remainingTokens[remainingTokens.length - 1] : deleteField();
+      // 保存先（privateAccounts）と移行元の accounts の両方から、この端末のトークンを除去する
+      for (const collName of ['privateAccounts', 'accounts']) {
+        const userRef = doc(db, 'artifacts', appId, 'public', 'data', collName, username);
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          const existingTokens = Array.isArray(data.fcmTokens)
+            ? data.fcmTokens
+            : (data.fcmToken ? [data.fcmToken] : []);
+          if (localToken && !existingTokens.includes(localToken) && data.fcmToken !== localToken) continue;
+          const remainingTokens = localToken
+            ? existingTokens.filter(t => t && t !== localToken)
+            : [];
+          const nextPrimary = remainingTokens.length > 0 ? remainingTokens[remainingTokens.length - 1] : deleteField();
 
-        await setDoc(userRef, {
-          fcmTokens: remainingTokens,
-          fcmToken: nextPrimary,
-          fcmTokenUpdatedAt: Date.now()
-        }, { merge: true });
+          await setDoc(userRef, {
+            fcmTokens: remainingTokens,
+            fcmToken: nextPrimary,
+            fcmTokenUpdatedAt: Date.now()
+          }, { merge: true });
+        }
       }
       if (typeof window !== 'undefined') {
         localStorage.removeItem(DEVICE_TOKEN_STORAGE_KEY);
@@ -1286,6 +1294,7 @@ export default function App() {
   }, [currentTab, currentUser]);
 
   const exercisesByChunkRef = useRef({});
+  const myPrivateRef = useRef({});
 
   useEffect(() => {
     if (!db) return;
@@ -1396,7 +1405,7 @@ export default function App() {
     const unsub = onSnapshot(meRef, (docSnap) => {
         if (!docSnap.metadata.fromCache) setServerSynced(prev => prev.accounts ? prev : { ...prev, accounts: true });
        if (docSnap.exists()) {
-          const newData = docSnap.data();
+          const newData = { ...docSnap.data(), ...myPrivateRef.current };
           const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [currentUser]: newData });
           if (diff.hasChanges) {
              const safeSelfMap = sanitizeAccountsMap(diff.map);
@@ -1411,6 +1420,26 @@ export default function App() {
     });
     return () => unsub();
   }, [db, currentUser]);
+
+  // 自分の秘密情報（フレンドコード・生年月日・PIN・端末トークン）は privateAccounts に分離し、
+  // 自分の accountsInfo エントリへだけマージする（他人の分は読めない）
+  useEffect(() => {
+    if (!db || !currentUser) return;
+    const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser);
+    const unsub = onSnapshot(privRef, (docSnap) => {
+       myPrivateRef.current = docSnap.exists() ? docSnap.data() : {};
+       setAccountsInfo(prev => prev[currentUser]
+          ? { ...prev, [currentUser]: { ...prev[currentUser], ...myPrivateRef.current } }
+          : prev);
+    }, () => {});
+    return () => unsub();
+  }, [db, currentUser]);
+
+  // ルール側で「認証UID → ユーザー名」を引けるよう uidMap を維持する
+  useEffect(() => {
+    if (!db || !currentUser || !firebaseUser || !firebaseUser.uid) return;
+    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'uidMap', firebaseUser.uid), { username: currentUser }, { merge: true }).catch(() => {});
+  }, [db, currentUser, firebaseUser]);
 
   useEffect(() => {
     if (!db || !currentUser || !accountsInfo[currentUser]) return;
@@ -1488,16 +1517,30 @@ export default function App() {
       if (docSnap.exists()) accountData = docSnap.data();
     } catch(e) { return false; }
     const joinedGyms = accountData?.joinedGyms || ['common'];
-    if (pin === 'google') {
-      if (!accountData) {
-        const accountsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'));
-        if (accountsSnap.size >= 10) { alert("ユーザー数が上限（10人）に達しているため、新規登録できません。"); return false; }
-        try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: '新規ユーザー', friendCode: generateFriendCode(), isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true }); setCurrentUser(username); } catch (e) { return false; }
-      } else {
-        setCurrentUser(username);
-        try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true }); } catch (e) {}
-      }
+    // かつて存在した「PIN欄に google と入れるとユーザー名だけで入れる」分岐は
+    // なりすましに使えるため廃止した。存在しないアカウントではログインできない
+    if (!accountData) {
+      return false;
     } else {
+      // PIN照合はサーバー側（/api/pinLogin）で行う。成功すると正式なセッションが得られる
+      try {
+        const res = await fetch(getApiUrl('/api/pinLogin'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, pin })
+        });
+        if (res.ok) {
+          const j = await res.json().catch(() => null);
+          if (j && j.token) {
+            await signInWithCustomToken(auth, j.token);
+            setCurrentUser(username);
+            try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true }); } catch (e) {}
+            return true;
+          }
+          return false;
+        }
+        if (res.status === 401 || res.status === 429) return false;
+      } catch (e) { /* サーバー未設定時はフォールバックへ */ }
       if (!accountData || !accountData.pin) {
         return false;
       } else if (accountData.pin === pin) {
@@ -1526,12 +1569,19 @@ export default function App() {
       
       let baseName = googleUser.displayName || (googleUser.email ? googleUser.email.split('@')[0] : 'user');
       const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', baseName));
-      if (docSnap.exists() && !docSnap.data().googleUid && docSnap.data().friendCode) {
+      if (docSnap.exists() && !docSnap.data().googleUid) {
          const username = baseName;
          setCurrentUser(username);
          localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
          const joinedGyms = docSnap.data()?.joinedGyms || ['common'];
          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { googleUid: googleUser.uid, lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+         const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username);
+         const privSnap = await getDoc(privRef).catch(() => null);
+         if (privSnap && privSnap.exists()) {
+           await setDoc(privRef, { googleUid: googleUser.uid }, { merge: true }).catch(() => {});
+         } else {
+           await setDoc(privRef, { googleUid: googleUser.uid, friendCode: generateFriendCode() }, { merge: true }).catch(() => {});
+         }
          return true;
       }
 
@@ -1539,7 +1589,7 @@ export default function App() {
       let counter = 1;
       while (true) {
         const checkSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
-        if (checkSnap.exists() && checkSnap.data().friendCode) {
+        if (checkSnap.exists()) {
           username = `${baseName}${counter}`;
           counter++;
         } else {
@@ -1550,7 +1600,8 @@ export default function App() {
       const accountsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'));
       if (accountsSnap.size >= 10) { alert("ユーザー数が上限（10人）に達しているため、新規登録できません。"); return false; }
 
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: username, googleUid: googleUser.uid, friendCode: generateFriendCode(), isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true }); 
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: username, googleUid: googleUser.uid, isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username), { friendCode: generateFriendCode(), googleUid: googleUser.uid }, { merge: true });
       setCurrentUser(username); 
       localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
       return true;
@@ -1573,6 +1624,7 @@ export default function App() {
         return;
       }
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { appleUid: result.user.uid }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { appleUid: result.user.uid }, { merge: true }).catch(() => {});
       alert('Appleアカウントと連携しました。');
     } catch (e) {
       alert('Appleアカウントとの連携に失敗しました。');
@@ -1594,6 +1646,7 @@ export default function App() {
         return;
       }
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { googleUid: result.user.uid }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { googleUid: result.user.uid }, { merge: true }).catch(() => {});
       alert('Googleアカウントと連携しました。');
     } catch (e) {
       console.error(e);
@@ -1632,12 +1685,19 @@ export default function App() {
 
       let baseName = (appleRes.fullName || '').trim() || appleUser.displayName || (appleUser.email ? appleUser.email.split('@')[0] : '') || 'user';
       const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', baseName));
-      if (docSnap.exists() && !docSnap.data().appleUid && docSnap.data().friendCode) {
+      if (docSnap.exists() && !docSnap.data().appleUid) {
         const username = baseName;
         setCurrentUser(username);
         localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
         const joinedGyms = docSnap.data()?.joinedGyms || ['common'];
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { appleUid: appleUser.uid, lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+        const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username);
+        const privSnap = await getDoc(privRef).catch(() => null);
+        if (privSnap && privSnap.exists()) {
+          await setDoc(privRef, { appleUid: appleUser.uid }, { merge: true }).catch(() => {});
+        } else {
+          await setDoc(privRef, { appleUid: appleUser.uid, friendCode: generateFriendCode() }, { merge: true }).catch(() => {});
+        }
         return true;
       }
 
@@ -1645,7 +1705,7 @@ export default function App() {
       let counter = 1;
       while (true) {
         const checkSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
-        if (checkSnap.exists() && checkSnap.data().friendCode) {
+        if (checkSnap.exists()) {
           username = `${baseName}${counter}`;
           counter++;
         } else {
@@ -1656,7 +1716,8 @@ export default function App() {
       const accountsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'));
       if (accountsSnap.size >= 10) { alert("ユーザー数が上限（10人）に達しているため、新規登録できません。"); return false; }
 
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: username, appleUid: appleUser.uid, friendCode: generateFriendCode(), isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { displayName: username, appleUid: appleUser.uid, isTraining: false, lastActive: Date.now(), isAppOnline: true, theme: 'light', friends: [], joinedGyms: ['common'] }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username), { friendCode: generateFriendCode(), appleUid: appleUser.uid }, { merge: true });
       setCurrentUser(username);
       localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
       return true;
@@ -1942,7 +2003,12 @@ export default function App() {
     setAccountsInfo(nextAcc);
     persistLocalSnapshot({ accountsInfo: nextAcc }, { added: 0, modified: 1, removed: 0 });
     if (shouldClose) setShowProfileModal(false);
-    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), data, { merge: true }); } catch (e) {}
+    // 生年月日はログイン情報の一部なので秘密情報側（privateAccounts）に保存する
+    const { birthDate, ...profileData } = data || {};
+    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), profileData, { merge: true }); } catch (e) {}
+    if (birthDate !== undefined) {
+      try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { birthDate: birthDate || '' }, { merge: true }); } catch (e) {}
+    }
   };
 
   const toggleLike = async (postId, currentLikes, isCurrentlyLiked, likedUsers = []) => {
@@ -2350,12 +2416,21 @@ export default function App() {
           friendUsername = friendCodeOrName;
           friendData = docSnap.data();
        } else {
-          const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('friendCode', '==', friendCodeOrName), limit(1));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-             friendUsername = snap.docs[0].id;
-             friendData = snap.docs[0].data();
-          }
+          // フレンドコード検索はサーバー経由（他人のコードは直接検索できない）
+          try {
+            const idToken = auth && auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+            const res = idToken ? await fetch(getApiUrl('/api/findUserByCode'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+              body: JSON.stringify({ code: friendCodeOrName })
+            }) : null;
+            if (res && res.ok) {
+              const j = await res.json();
+              friendUsername = j.username;
+              const fSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', friendUsername));
+              friendData = fSnap.exists() ? fSnap.data() : { displayName: j.displayName };
+            }
+          } catch (e) {}
        }
     } catch(e) {}
     
@@ -2399,12 +2474,21 @@ export default function App() {
           partnerUsername = friendCodeOrName;
           partnerData = docSnap.data();
        } else {
-          const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('friendCode', '==', friendCodeOrName), limit(1));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-             partnerUsername = snap.docs[0].id;
-             partnerData = snap.docs[0].data();
-          }
+          // フレンドコード検索はサーバー経由（他人のコードは直接検索できない）
+          try {
+            const idToken = auth && auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+            const res = idToken ? await fetch(getApiUrl('/api/findUserByCode'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+              body: JSON.stringify({ code: friendCodeOrName })
+            }) : null;
+            if (res && res.ok) {
+              const j = await res.json();
+              partnerUsername = j.username;
+              const fSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', partnerUsername));
+              partnerData = fSnap.exists() ? fSnap.data() : { displayName: j.displayName };
+            }
+          } catch (e) {}
        }
     } catch(e) {}
     
@@ -2487,7 +2571,7 @@ export default function App() {
   const handleGenerateFriendCode = async () => {
     if (!currentUser || !db) return;
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { friendCode: generateFriendCode() }, { merge: true });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { friendCode: generateFriendCode() }, { merge: true });
     } catch (e) {}
   };
 
@@ -2646,6 +2730,10 @@ export default function App() {
       setCurrentTab('timeline');
       setEditingPost(null);
 
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', userIdToDelete)).catch(() => {});
+      if (auth && auth.currentUser) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'uidMap', auth.currentUser.uid)).catch(() => {});
+      }
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', userIdToDelete));
       try {
         await signOut(auth);
