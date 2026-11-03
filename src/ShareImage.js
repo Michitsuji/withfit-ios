@@ -90,11 +90,11 @@ export function buildShareModel(post) {
   const dt = new Date(post.timestamp || post.date || Date.now());
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dateText = `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, '0')}.${String(dt.getDate()).padStart(2, '0')} ${days[dt.getDay()]}`;
-  // 部位は主要5部位のみ、セット数が多い順（同数なら登場順）に「胸・背中・腕トレ」形式で
-  const MAIN_CATS = ['脚', '胸', '背中', '肩', '腕'];
+  // 部位は全カテゴリが対象（腹筋・有酸素なども含む）、セット数が多い順
+  // （同数なら登場順）に「胸・背中・腕トレ」形式で
   const catSets = {};
   items.forEach((i) => {
-    if (i.category && MAIN_CATS.includes(i.category)) {
+    if (i.category) {
       catSets[i.category] = (catSets[i.category] || 0) + (i.sets?.length || 0);
     }
   });
@@ -243,8 +243,14 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
   ctx.shadowBlur = 6;
   ctx.shadowOffsetY = 2;
 
-  // ヘッダー
-  ctx.font = `700 31px ${FONT}`;
+  // ヘッダー（長いジム名＋全部位でも右端からはみ出さないよう、幅に合わせて縮小）
+  let headerPx = 31;
+  ctx.font = `700 ${headerPx}px ${FONT}`;
+  const headerMaxW = CW - MX * 2;
+  while (headerPx > 20 && ctx.measureText(model.header).width > headerMaxW) {
+    headerPx -= 1;
+    ctx.font = `700 ${headerPx}px ${FONT}`;
+  }
   ctx.fillStyle = COL.white;
   ctx.fillText(model.header, MX, 44);
 
