@@ -1474,9 +1474,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var aspectSquare = false
     private var canvasW: CGFloat = 1080
     private var canvasH: CGFloat = 1920
-    // テンプレート2のコラージュ位置（Canvas座標のオフセット）
+    // テンプレート2のコラージュ位置（Canvas座標のオフセット）と大きさ
     private var overlayOffX: CGFloat = 0
     private var overlayOffY: CGFloat = 0
+    private var overlayScale: CGFloat = 1
 
     private enum MediaKind { case none, photo, video }
     private var step: Int = 1
@@ -1530,7 +1531,16 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var modeButton: UIButton!
     private var flipButton: UIButton!
     private var aspectButton: UIButton!
-    private var templateButton: UIButton!
+    // 動画トリミング用（ステップ2・動画のときだけ表示）
+    private var trimView: UIView!
+    private var trimStartSlider: UISlider!
+    private var trimEndSlider: UISlider!
+    private var trimStartLabel: UILabel!
+    private var trimEndLabel: UILabel!
+    private var videoDuration: Double = 0
+    private var trimStart: Double = 0
+    private var trimEnd: Double = 0
+    private var timeObserver: Any?
     private var actionBar: UIVisualEffectView!
     private var changeButton: UIButton!
     private var retakeButton: UIButton!
@@ -1669,15 +1679,22 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         albumButton = makeSourceButton(symbol: "photo.on.rectangle", title: "アルバムから選ぶ", filled: false, action: #selector(openPickerTapped))
         view.addSubview(albumButton)
 
-        // カメラ操作（シャッター左=写真/動画切替・前後切替、右=縦横比・テンプレート切替）
+        // カメラ操作（シャッター左=写真/動画モード切替、右=前後切替）
+        // テンプレート切替はステージの左右スワイプ、縦横比はアルバムボタンの横のボタンで行う
         modeButton = makeCamIconButton(symbol: "video.fill", action: #selector(modeTapped))
         flipButton = makeCamIconButton(symbol: "arrow.triangle.2.circlepath.camera.fill", action: #selector(flipTapped))
         aspectButton = makeCamIconButton(symbol: "square", action: #selector(aspectTapped))
-        templateButton = makeCamIconButton(symbol: "chart.bar.fill", action: #selector(templateTapped))
         view.addSubview(modeButton)
         view.addSubview(flipButton)
         view.addSubview(aspectButton)
-        view.addSubview(templateButton)
+
+        // テンプレート切替は左右スワイプ（Instagramストーリーズのエフェクト切替のように）
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleTemplateSwipe))
+        swipeLeft.direction = .left
+        stageView.addGestureRecognizer(swipeLeft)
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(handleTemplateSwipe))
+        swipeRight.direction = .right
+        stageView.addGestureRecognizer(swipeRight)
         shutterButton = UIButton(type: .custom)
         shutterButton.backgroundColor = UIColor.black.withAlphaComponent(0.05)
         shutterButton.layer.cornerRadius = 36
@@ -1702,6 +1719,43 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         actionBar.contentView.addSubview(saveButton)
         actionBar.contentView.addSubview(instagramButton)
         view.addSubview(actionBar)
+
+        // 動画トリミング（開始/終了の2本のスライダー）
+        trimView = UIView()
+        trimView.isHidden = true
+        let makeTrimLabel = { (text: String) -> UILabel in
+            let l = UILabel()
+            l.text = text
+            l.font = .systemFont(ofSize: 11, weight: .semibold)
+            l.textColor = UIColor.black.withAlphaComponent(0.55)
+            return l
+        }
+        let makeTimeLabel = { () -> UILabel in
+            let l = UILabel()
+            l.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+            l.textColor = .black
+            l.textAlignment = .right
+            return l
+        }
+        let startTitle = makeTrimLabel("開始")
+        startTitle.tag = 101
+        trimView.addSubview(startTitle)
+        trimStartSlider = UISlider()
+        trimStartSlider.minimumTrackTintColor = .black
+        trimStartSlider.addTarget(self, action: #selector(trimStartChanged), for: .valueChanged)
+        trimView.addSubview(trimStartSlider)
+        trimStartLabel = makeTimeLabel()
+        trimView.addSubview(trimStartLabel)
+        let endTitle = makeTrimLabel("終了")
+        endTitle.tag = 102
+        trimView.addSubview(endTitle)
+        trimEndSlider = UISlider()
+        trimEndSlider.minimumTrackTintColor = .black
+        trimEndSlider.addTarget(self, action: #selector(trimEndChanged), for: .valueChanged)
+        trimView.addSubview(trimEndSlider)
+        trimEndLabel = makeTimeLabel()
+        trimView.addSubview(trimEndLabel)
+        view.addSubview(trimView)
 
         busyOverlay = UIView()
         busyOverlay.backgroundColor = UIColor.white.withAlphaComponent(0.7)
@@ -1822,7 +1876,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let safeBottom = view.safeAreaInsets.bottom
         let topH = safeTop + 56
         // 背景行が無くなった分、ステップ1のステージが大きく使える
-        let bottomH = safeBottom + (step == 1 ? 178 : 108)
+        let bottomH = safeBottom + (step == 1 ? 178 : 108 + (mediaKind == .video ? 76 : 0))
         let availH = bounds.height - topH - bottomH
         let stageW = max(200, min(bounds.width - 24, availH * canvasW / canvasH, 460))
         let stageH = stageW * canvasH / canvasW
@@ -1839,30 +1893,40 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         closeButton.frame = CGRect(x: 16, y: safeTop + 8, width: 38, height: 38)
         hintLabel.frame = CGRect(x: 16, y: stageY + stageH + 8, width: bounds.width - 32, height: 18)
 
-        // ステップ1の下部（下から: アルバム→操作ゾーン）
+        // ステップ1の下部（下から: アルバム＋縦横比→操作ゾーン）
         let albumY = bounds.height - safeBottom - 62
-        albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
+        albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW - 60, height: 52)
+        aspectButton.frame = CGRect(x: stageX + stageW - 52, y: albumY, width: 52, height: 52)
         let zoneY = albumY - 10 - 76
-        let cxPt = bounds.width / 2
-        shutterButton.frame = CGRect(x: cxPt - 36, y: zoneY + 2, width: 72, height: 72)
-        // シャッター左にモード切替（内側）・前後切替（外側）、
-        // 右に縦横比（内側）・テンプレート切替（外側）を並べる
-        modeButton.frame = CGRect(x: cxPt - 88 - 24, y: zoneY + 14, width: 48, height: 48)
-        flipButton.frame = CGRect(x: cxPt - 146 - 24, y: zoneY + 14, width: 48, height: 48)
-        aspectButton.frame = CGRect(x: cxPt + 88 - 24, y: zoneY + 14, width: 48, height: 48)
-        templateButton.frame = CGRect(x: cxPt + 146 - 24, y: zoneY + 14, width: 48, height: 48)
+        shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
+        // 切替アイコンはシャッターから程よい距離（中心±105pt）に置く
+        modeButton.frame = CGRect(x: bounds.width / 2 - 105 - 26, y: zoneY + 12, width: 52, height: 52)
+        flipButton.frame = CGRect(x: bounds.width / 2 + 105 - 26, y: zoneY + 12, width: 52, height: 52)
 
         // ステップ2のツールバー
         let actionH: CGFloat = 74 + safeBottom
         actionBar.frame = CGRect(x: 0, y: bounds.height - actionH, width: bounds.width, height: actionH)
         layoutToolButtons()
 
+        // 動画トリミングバー（アクションバーの上）
+        let trimH: CGFloat = 70
+        trimView.frame = CGRect(x: 16, y: bounds.height - actionH - trimH - 4, width: bounds.width - 32, height: trimH)
+        let tw = trimView.frame.width
+        if let startTitle = trimView.viewWithTag(101), let endTitle = trimView.viewWithTag(102) {
+            startTitle.frame = CGRect(x: 0, y: 3, width: 30, height: 26)
+            trimStartSlider.frame = CGRect(x: 36, y: 3, width: tw - 36 - 52, height: 26)
+            trimStartLabel.frame = CGRect(x: tw - 48, y: 3, width: 48, height: 26)
+            endTitle.frame = CGRect(x: 0, y: 37, width: 30, height: 26)
+            trimEndSlider.frame = CGRect(x: 36, y: 37, width: tw - 36 - 52, height: 26)
+            trimEndLabel.frame = CGRect(x: tw - 48, y: 37, width: 48, height: 26)
+        }
+
         busyOverlay.frame = view.bounds
         busySpinner.center = CGPoint(x: bounds.width / 2, y: bounds.height / 2 - 16)
         busyLabel.frame = CGRect(x: 16, y: bounds.height / 2 + 16, width: bounds.width - 32, height: 22)
     }
 
-    // オーバーレイの表示位置（テンプレート2ではドラッグでずらせる）
+    // オーバーレイの表示位置・大きさ（テンプレート2ではドラッグとピンチで調整できる）
     private func positionOverlayView() {
         let b = stageView.bounds
         guard b.width > 0 else {
@@ -1870,7 +1934,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             return
         }
         let k = b.width / canvasW
-        overlayView.frame = CGRect(x: overlayOffX * k, y: overlayOffY * k, width: b.width, height: b.height)
+        let w = b.width * overlayScale
+        let h = b.height * overlayScale
+        overlayView.frame = CGRect(
+            x: (b.width - w) / 2 + overlayOffX * k,
+            y: (b.height - h) / 2 + overlayOffY * k,
+            width: w,
+            height: h
+        )
     }
 
     private func layoutToolButtons() {
@@ -1907,8 +1978,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         shutterButton.isHidden = !camUI
         modeButton.isHidden = !camUI
         flipButton.isHidden = !camUI
-        aspectButton.isHidden = !camUI
-        templateButton.isHidden = !camUI
+        aspectButton.isHidden = !inStep1
+        trimView.isHidden = !(!inStep1 && mediaKind == .video)
         recordTimeLabel.isHidden = !(camUI && !cameraModePhoto)
         albumButton.isHidden = !inStep1
         actionBar.isHidden = inStep1
@@ -1920,11 +1991,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                 hintLabel.text = ""
             }
         } else if mediaKind == .photo {
-            hintLabel.text = templateIndex == 2 ? "ドラッグでコラージュの位置、ピンチで写真を調整できます" : "ドラッグ・ピンチで写真の位置を調整できます"
+            hintLabel.text = templateIndex == 2 ? "ドラッグ・ピンチでコラージュの位置と大きさを調整できます" : "ドラッグ・ピンチで写真の位置を調整できます"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "camera", title: "撮り直す")
         } else if mediaKind == .video {
-            hintLabel.text = templateIndex == 2 ? "ドラッグでコラージュの位置、ピンチで位置を調整（タップで再生/停止）" : "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
+            hintLabel.text = templateIndex == 2 ? "ドラッグ・ピンチでコラージュを調整、下のバーで動画をトリミング" : "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "video", title: "撮り直す")
         }
@@ -2161,13 +2232,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         requestOverlayRefresh()
     }
 
-    // テンプレートの切替（1=記録コラージュ / 2=Strava風）。アイコンは切り替え先を出す
-    @objc private func templateTapped() {
-        if isRecording { return }
+    // テンプレートの切替はステージの左右スワイプで行う（1⇔2）
+    @objc private func handleTemplateSwipe() {
+        if step != 1 || isRecording { return }
         templateIndex = (templateIndex == 1) ? 2 : 1
         overlayOffX = 0
         overlayOffY = 0
-        setCamIcon(templateButton, symbol: templateIndex == 1 ? "chart.bar.fill" : "list.bullet")
+        overlayScale = 1
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         positionOverlayView()
         requestOverlayRefresh()
     }
@@ -2483,6 +2555,18 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        // テンプレート2のステップ2では、ピンチでコラージュの大きさを変える
+        if step == 2 && templateIndex == 2 {
+            if gesture.state == .ended || gesture.state == .cancelled {
+                refreshFinalCache()
+                return
+            }
+            guard gesture.state == .changed else { return }
+            overlayScale = min(1.6, max(0.5, overlayScale * gesture.scale))
+            gesture.scale = 1
+            positionOverlayView()
+            return
+        }
         if gesture.state == .ended || gesture.state == .cancelled {
             refreshFinalCache()
             return
@@ -2500,6 +2584,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             if player.rate > 0 {
                 player.pause()
             } else {
+                // 終端（トリミング終了位置）まで来ていたら先頭から再生する
+                let end = trimEnd > 0 ? trimEnd : videoDuration
+                if end > 0 && player.currentTime().seconds >= end - 0.1 {
+                    player.seek(to: CMTime(seconds: trimStart, preferredTimescale: 600))
+                }
                 player.play()
             }
         }
@@ -2520,12 +2609,20 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             loopObserver = nil
         }
         player?.replaceCurrentItem(with: nil)
+        if let obs = timeObserver {
+            player?.removeTimeObserver(obs)
+            timeObserver = nil
+        }
         videoURL = nil
+        videoDuration = 0
+        trimStart = 0
+        trimEnd = 0
         videoView.isHidden = true
         finalCache = nil
         cacheGeneration += 1
         overlayOffX = 0
         overlayOffY = 0
+        overlayScale = 1
         positionOverlayView()
     }
 
@@ -2565,11 +2662,64 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             self?.player?.seek(to: .zero)
             self?.player?.play()
         }
+        // トリミングの初期化（全体を選択した状態から開始）
+        let durSec = CMTimeGetSeconds(asset.duration)
+        videoDuration = (durSec.isFinite && durSec > 0) ? durSec : 0
+        trimStart = 0
+        trimEnd = videoDuration
+        trimStartSlider.minimumValue = 0
+        trimStartSlider.maximumValue = Float(max(0.1, videoDuration))
+        trimStartSlider.value = 0
+        trimEndSlider.minimumValue = 0
+        trimEndSlider.maximumValue = Float(max(0.1, videoDuration))
+        trimEndSlider.value = Float(videoDuration)
+        updateTrimLabels()
+        if let obs = timeObserver {
+            player?.removeTimeObserver(obs)
+            timeObserver = nil
+        }
+        timeObserver = player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
+            guard let self = self, self.mediaKind == .video, let player = self.player else { return }
+            let end = self.trimEnd > 0 ? self.trimEnd : self.videoDuration
+            if end > 0 && player.rate > 0 && time.seconds >= end - 0.05 {
+                player.seek(to: CMTime(seconds: self.trimStart, preferredTimescale: 600))
+            }
+        }
         videoView.isHidden = false
         edgeState = (x: false, y: false, sMax: false, fit: true)
         applyView(s: 1, x: 0, y: 0)
         player?.play()
         goToStep(2)
+    }
+
+    private func formatTrimTime(_ sec: Double) -> String {
+        let s = max(0, Int(sec.rounded()))
+        return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    private func updateTrimLabels() {
+        trimStartLabel.text = formatTrimTime(trimStart)
+        trimEndLabel.text = formatTrimTime(trimEnd > 0 ? trimEnd : videoDuration)
+    }
+
+    @objc private func trimStartChanged() {
+        var v = Double(trimStartSlider.value)
+        let end = trimEnd > 0 ? trimEnd : videoDuration
+        v = min(v, max(0, end - 0.5))
+        trimStart = v
+        trimStartSlider.value = Float(v)
+        updateTrimLabels()
+        player?.seek(to: CMTime(seconds: v, preferredTimescale: 600), toleranceBefore: CMTime(seconds: 0.05, preferredTimescale: 600), toleranceAfter: CMTime(seconds: 0.05, preferredTimescale: 600))
+    }
+
+    @objc private func trimEndChanged() {
+        var v = Double(trimEndSlider.value)
+        v = max(v, trimStart + 0.5)
+        trimEnd = v
+        trimEndSlider.value = Float(v)
+        updateTrimLabels()
+        let preview = max(trimStart, v - 0.5)
+        player?.seek(to: CMTime(seconds: preview, preferredTimescale: 600), toleranceBefore: CMTime(seconds: 0.05, preferredTimescale: 600), toleranceAfter: CMTime(seconds: 0.05, preferredTimescale: 600))
     }
 
     @objc private func openPickerTapped() {
@@ -2648,7 +2798,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                 let dh = ih * base * viewS
                 photo.draw(in: CGRect(x: (canvasW - dw) / 2 + viewX, y: (canvasH - dh) / 2 + viewY, width: dw, height: dh))
             }
-            overlay.draw(in: CGRect(x: overlayOffX, y: overlayOffY, width: canvasW, height: canvasH))
+            // オーバーレイは位置・大きさの調整を反映して描く（テンプレート1では常に等倍・中央）
+            let ow = canvasW * overlayScale
+            let oh = canvasH * overlayScale
+            overlay.draw(in: CGRect(x: (canvasW - ow) / 2 + overlayOffX, y: (canvasH - oh) / 2 + overlayOffY, width: ow, height: oh))
         }
     }
 
@@ -2670,8 +2823,31 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             return
         }
         let asset = AVAsset(url: url)
-        guard let track = asset.tracks(withMediaType: .video).first,
-              let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+        guard let srcTrack = asset.tracks(withMediaType: .video).first else {
+            completion(nil)
+            return
+        }
+        // トリミングが指定されていれば、その区間だけを切り出したコンポジションを書き出し元にする
+        var exportAsset: AVAsset = asset
+        var track: AVAssetTrack = srcTrack
+        let effStart = max(0, trimStart)
+        let effEnd = trimEnd > 0 ? trimEnd : videoDuration
+        if videoDuration > 0 && (effStart > 0.01 || effEnd < videoDuration - 0.01) {
+            let comp = AVMutableComposition()
+            let range = CMTimeRange(start: CMTime(seconds: effStart, preferredTimescale: 600),
+                                    end: CMTime(seconds: effEnd, preferredTimescale: 600))
+            if let dstVideo = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                try? dstVideo.insertTimeRange(range, of: srcTrack, at: .zero)
+                dstVideo.preferredTransform = srcTrack.preferredTransform
+                track = dstVideo
+            }
+            if let srcAudio = asset.tracks(withMediaType: .audio).first,
+               let dstAudio = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                try? dstAudio.insertTimeRange(range, of: srcAudio, at: .zero)
+            }
+            exportAsset = comp
+        }
+        guard let export = AVAssetExportSession(asset: exportAsset, presetName: AVAssetExportPresetHighestQuality) else {
             completion(nil)
             return
         }
@@ -2686,7 +2862,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         comp.renderSize = renderSize
         comp.frameDuration = CMTime(value: 1, timescale: 30)
         let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+        instruction.timeRange = CMTimeRange(start: .zero, duration: exportAsset.duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
         // 向きの正規化→編集画面の配置（拡大・移動）までを1つの変換にまとめる
         let t = track.preferredTransform
@@ -2707,15 +2883,17 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         instruction.layerInstructions = [layerInstruction]
         comp.instructions = [instruction]
 
-        // テンプレート2でコラージュをずらしている場合は、その分を焼き込んだ
-        // オーバーレイ画像を用意する（レイヤー座標系の取り違えを避けるため）
+        // テンプレート2でコラージュの位置・大きさを変えている場合は、その分を
+        // 焼き込んだオーバーレイ画像を用意する（レイヤー座標系の取り違えを避けるため）
         var exportOverlay = overlay
-        if templateIndex == 2 && (overlayOffX != 0 || overlayOffY != 0) {
+        if templateIndex == 2 && (overlayOffX != 0 || overlayOffY != 0 || overlayScale != 1) {
             let oFormat = UIGraphicsImageRendererFormat()
             oFormat.scale = 1
             oFormat.opaque = false
             exportOverlay = UIGraphicsImageRenderer(size: renderSize, format: oFormat).image { _ in
-                overlay.draw(in: CGRect(x: overlayOffX, y: overlayOffY, width: renderSize.width, height: renderSize.height))
+                let ow = renderSize.width * overlayScale
+                let oh = renderSize.height * overlayScale
+                overlay.draw(in: CGRect(x: (renderSize.width - ow) / 2 + overlayOffX, y: (renderSize.height - oh) / 2 + overlayOffY, width: ow, height: oh))
             }
         }
 
