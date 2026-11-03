@@ -1135,7 +1135,8 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let settings = AVCapturePhotoSettings()
         sessionQueue.async { [weak self] in
-            self?.photoOutput.capturePhoto(with: settings, delegate: self)
+            guard let self = self else { return }
+            self.photoOutput.capturePhoto(with: settings, delegate: self)
         }
     }
 
