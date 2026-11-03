@@ -26,7 +26,7 @@ const localStorageBytes = () => {
   } catch (e) { return 0; }
 };
 
-function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush }) {
+function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accountsInfo, onUserClick, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush }) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [reportsCount, setReportsCount] = useState(0);
 
@@ -342,13 +342,13 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
           <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 rounded-xl p-4 flex items-center justify-between shadow-sm">
             <div>
               <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">あなたのフレンドコード</p>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-300 tracking-widest">{myInfo.friendCode || '未発行'}</p>
+              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-300 tracking-widest">{friendCode || (friendCodeLoaded ? '未発行' : '読み込み中…')}</p>
             </div>
-            {myInfo.friendCode ? (
-               <button onClick={() => { copyTextToClipboard(myInfo.friendCode); alert('コピーしました'); }} className="p-2 bg-white dark:bg-slate-900 rounded-lg text-emerald-500 shadow-sm border border-emerald-100 dark:border-emerald-800 transition-colors hover:bg-emerald-100 dark:hover:bg-slate-800"><Copy size={18} /></button>
-            ) : (
+            {friendCode ? (
+               <button onClick={() => { copyTextToClipboard(friendCode); alert('コピーしました'); }} className="p-2 bg-white dark:bg-slate-900 rounded-lg text-emerald-500 shadow-sm border border-emerald-100 dark:border-emerald-800 transition-colors hover:bg-emerald-100 dark:hover:bg-slate-800"><Copy size={18} /></button>
+            ) : friendCodeLoaded ? (
                <button onClick={onGenerateFriendCode} className="px-3 py-1.5 bg-emerald-500 text-white rounded-lg font-bold text-sm shadow-sm transition-colors hover:bg-emerald-600">発行する</button>
-            )}
+            ) : null}
           </div>
 
           <form onSubmit={handleSearchSubmit} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
@@ -356,7 +356,7 @@ function FriendsView({ currentUser, myInfo, accountsInfo, onUserClick, onSendReq
                <UserPlus size={18} className="text-emerald-500" /> フレンドコードで検索
             </h3>
             <div className="flex gap-2">
-              <input type="text" value={searchUsername} onChange={e => setSearchUsername(e.target.value)} required placeholder="5桁のコードを入力" className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-slate-800 dark:text-slate-100 focus:border-emerald-500 focus:outline-none text-base" style={{ fontSize: '16px' }}/>
+              <input type="text" value={searchUsername} onChange={e => setSearchUsername(e.target.value)} required placeholder="フレンドコードを入力" className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-slate-800 dark:text-slate-100 focus:border-emerald-500 focus:outline-none text-base" style={{ fontSize: '16px' }}/>
               <button type="submit" disabled={!searchUsername.trim()} className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 rounded-xl transition-colors disabled:opacity-50 shadow-sm">追加</button>
             </div>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-3 font-bold">※追加したフレンドの記録はタイムラインやデータ画面に表示されます。</p>

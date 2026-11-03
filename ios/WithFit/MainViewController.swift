@@ -1684,7 +1684,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         view.addSubview(albumButton)
 
         // カメラ操作（シャッター左=写真/動画モード切替、右=前後切替）
-        // テンプレート切替はステージの左右スワイプ、縦横比はステージ内左下の比率ボタンで行う
+        // テンプレート切替はステージの左右スワイプ、縦横比はタイトルの右隣の比率ボタンで行う
         modeButton = makeCamIconButton(symbol: "video.fill", action: #selector(modeTapped))
         flipButton = makeCamIconButton(symbol: "arrow.triangle.2.circlepath.camera.fill", action: #selector(flipTapped))
         view.addSubview(modeButton)
@@ -1695,9 +1695,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         aspectButton.setTitleColor(.white, for: .normal)
         aspectButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .bold)
         aspectButton.backgroundColor = UIColor.black.withAlphaComponent(0.55)
-        aspectButton.layer.cornerRadius = 10
+        aspectButton.layer.cornerRadius = 17
         aspectButton.addTarget(self, action: #selector(aspectTapped), for: .touchUpInside)
-        stageView.addSubview(aspectButton)
+        view.addSubview(aspectButton)
 
         // テンプレート切替は左右スワイプ（Instagramストーリーズのエフェクト切替のように）
         let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleTemplateSwipe))
@@ -1907,8 +1907,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         // ステップ1の下部（アルバムボタンは画面幅いっぱいで、縦横比に影響されない）
         let albumY = bounds.height - safeBottom - 62
         albumButton.frame = CGRect(x: 16, y: albumY, width: bounds.width - 32, height: 52)
-        // 縦横比ボタンはステージ内左下（ステージ座標）
-        aspectButton.frame = CGRect(x: 12, y: stageH - 54, width: 58, height: 42)
+        // 縦横比ボタンはタイトル「シェア画像を作成」の右隣（画面外・上部バー）
+        let titleText = (titleLabel.text ?? "") as NSString
+        let titleTextW = titleText.size(withAttributes: [.font: titleLabel.font!]).width
+        aspectButton.frame = CGRect(x: bounds.width / 2 + titleTextW / 2 + 10, y: safeTop + 10, width: 56, height: 34)
         let zoneY = albumY - 10 - 76
         shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
         // 切替アイコンはシャッターから程よい距離（中心±105pt）に置く

@@ -1478,17 +1478,29 @@ export default function App() {
 
   // 自分の秘密情報（フレンドコード・生年月日・PIN・端末トークン）は privateAccounts に分離し、
   // 自分の accountsInfo エントリへだけマージする（他人の分は読めない）
+  // 読み取りに失敗したら握りつぶさず、少し待って購読し直す。読み終わるまでは
+  // フレンドコード欄を「未発行」と表示しない（privateLoaded で判定する）
+  const [privateLoaded, setPrivateLoaded] = useState(false);
+  const [privateRetry, setPrivateRetry] = useState(0);
   useEffect(() => {
     if (!db || !currentUser) return;
+    setPrivateLoaded(false);
     const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser);
     const unsub = onSnapshot(privRef, (docSnap) => {
-       myPrivateRef.current = docSnap.exists() ? docSnap.data() : {};
+       const data = docSnap.exists() ? docSnap.data() : {};
+       myPrivateRef.current = data;
+       setPrivateLoaded(true);
+       if (data.friendCode) {
+          try { localStorage.setItem('withfit_my_code', JSON.stringify({ user: currentUser, code: data.friendCode })); } catch (e) {}
+       }
        setAccountsInfo(prev => prev[currentUser]
           ? { ...prev, [currentUser]: { ...prev[currentUser], ...myPrivateRef.current } }
           : prev);
-    }, () => {});
+    }, () => {
+       setTimeout(() => setPrivateRetry(r => r + 1), 4000);
+    });
     return () => unsub();
-  }, [db, currentUser]);
+  }, [db, currentUser, privateRetry]);
 
   // ルール側で「認証UID → ユーザー名」を引けるよう uidMap を維持する
   useEffect(() => {
@@ -2191,6 +2203,10 @@ export default function App() {
   };
 
   const myInfo = accountsInfo[currentUser] || {};
+  // フレンドコード表示用: 金庫から読めた値を優先し、読めていない間は端末内の控えでつなぐ
+  const myFriendCode = myInfo.friendCode || (() => {
+    try { const c = JSON.parse(localStorage.getItem('withfit_my_code') || 'null'); return c && c.user === currentUser ? c.code : null; } catch (e) { return null; }
+  })();
   const allGyms = useMemo(() => [{ id: 'common', name: 'フリーウェイト', createdAt: 0 }, ...gyms], [gyms]);
 
   const startNotifContextRef = useRef({ myInfo: {}, allGyms: [], sendNotification: null });
@@ -2731,7 +2747,9 @@ export default function App() {
   const handleGenerateFriendCode = async () => {
     if (!currentUser || !db) return;
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { friendCode: generateFriendCode() }, { merge: true });
+      const code = generateFriendCode();
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', currentUser), { friendCode: code }, { merge: true });
+      try { localStorage.setItem('withfit_my_code', JSON.stringify({ user: currentUser, code })); } catch (e) {}
     } catch (e) {}
   };
 
@@ -3359,7 +3377,7 @@ export default function App() {
         {currentTab === 'exercises' && <ExercisesView gyms={allGyms} exercises={exercises} posts={visiblePosts} accountsInfo={accountsInfo} currentUser={currentUser} myInfo={myInfo} setCurrentTab={setCurrentTab} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'record' && <RecordView onUserClick={setSelectedUserProfile} onStart={handleStartTraining} onPost={handlePostWorkout} onCancel={handleCancelTraining} onRequestJointTraining={handleRequestJointTraining} onAcceptJointTraining={handleAcceptJointTraining} onRejectJointTraining={handleRejectJointTraining} onCancelJointTraining={handleCancelJointTraining} onImportItem={handleImportExerciseItem} myInfo={myInfo} gyms={allGyms} exercises={exercises} workoutItems={draftWorkoutItems} setWorkoutItems={setDraftWorkoutItems} selectedCategories={selectedCategories} setSelectedCategories={setSelectedCategories} posts={visiblePosts} currentUser={currentUser} isManual={isRecordManual} setIsManual={setIsRecordManual} onActiveExerciseChange={handleActiveExerciseChange} accountsInfo={accountsInfo} />}
         {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
-        {currentTab === 'friends' && <FriendsView currentUser={currentUser} myInfo={myInfo} accountsInfo={accountsInfo} onSendRequest={handleSendFriendRequest} onAccept={handleAcceptFriendRequest} onReject={handleRejectFriendRequest} onRemoveFriend={handleRemoveFriend} onSendPartnerRequest={handleSendPartnerRequest} onAcceptPartnerRequest={handleAcceptPartnerRequest} onRejectPartnerRequest={handleRejectPartnerRequest} onRemovePartner={handleRemovePartner} onFriendClick={(u) => setSelectedFriendUser(u)} onUserClick={setSelectedUserProfile} onGenerateFriendCode={handleGenerateFriendCode} posts={posts} targetFriendTab={targetFriendTab} setTargetFriendTab={setTargetFriendTab} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onSendTestPush={async (targetUser, message) => {
+        {currentTab === 'friends' && <FriendsView currentUser={currentUser} myInfo={myInfo} friendCode={myFriendCode} friendCodeLoaded={privateLoaded} accountsInfo={accountsInfo} onSendRequest={handleSendFriendRequest} onAccept={handleAcceptFriendRequest} onReject={handleRejectFriendRequest} onRemoveFriend={handleRemoveFriend} onSendPartnerRequest={handleSendPartnerRequest} onAcceptPartnerRequest={handleAcceptPartnerRequest} onRejectPartnerRequest={handleRejectPartnerRequest} onRemovePartner={handleRemovePartner} onFriendClick={(u) => setSelectedFriendUser(u)} onUserClick={setSelectedUserProfile} onGenerateFriendCode={handleGenerateFriendCode} posts={posts} targetFriendTab={targetFriendTab} setTargetFriendTab={setTargetFriendTab} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onSendTestPush={async (targetUser, message) => {
           if (!db || !targetUser || !message) return;
           const res = await sendNotification(
             targetUser,
