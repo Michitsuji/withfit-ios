@@ -419,8 +419,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             let template = payload["template"] as? Int ?? 1
             let w = payload["w"] as? Int ?? 1080
             let h = payload["h"] as? Int ?? 1920
+            let hit = payload["hit"] as? [String: Any]
             DispatchQueue.main.async { [weak self] in
-                self?.shareEditorVC?.applyOverlay(overlay, template: template, w: w, h: h)
+                self?.shareEditorVC?.applyOverlay(overlay, template: template, w: w, h: h, hit: hit)
             }
 
         case "SAVE_IMAGE":
@@ -1478,6 +1479,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var overlayOffX: CGFloat = 0
     private var overlayOffY: CGFloat = 0
     private var overlayScale: CGFloat = 1
+    private var overlayHitFrac: CGRect?
+    private var panForOverlay = false
+    private var pinchForOverlay = false
 
     private enum MediaKind { case none, photo, video }
     private var step: Int = 1
@@ -1680,13 +1684,20 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         view.addSubview(albumButton)
 
         // カメラ操作（シャッター左=写真/動画モード切替、右=前後切替）
-        // テンプレート切替はステージの左右スワイプ、縦横比はアルバムボタンの横のボタンで行う
+        // テンプレート切替はステージの左右スワイプ、縦横比はステージ内左下の比率ボタンで行う
         modeButton = makeCamIconButton(symbol: "video.fill", action: #selector(modeTapped))
         flipButton = makeCamIconButton(symbol: "arrow.triangle.2.circlepath.camera.fill", action: #selector(flipTapped))
-        aspectButton = makeCamIconButton(symbol: "square", action: #selector(aspectTapped))
         view.addSubview(modeButton)
         view.addSubview(flipButton)
-        view.addSubview(aspectButton)
+
+        aspectButton = UIButton(type: .system)
+        aspectButton.setTitle("9:16", for: .normal)
+        aspectButton.setTitleColor(.white, for: .normal)
+        aspectButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .bold)
+        aspectButton.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        aspectButton.layer.cornerRadius = 10
+        aspectButton.addTarget(self, action: #selector(aspectTapped), for: .touchUpInside)
+        stageView.addSubview(aspectButton)
 
         // テンプレート切替は左右スワイプ（Instagramストーリーズのエフェクト切替のように）
         let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(handleTemplateSwipe))
@@ -1893,10 +1904,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         closeButton.frame = CGRect(x: 16, y: safeTop + 8, width: 38, height: 38)
         hintLabel.frame = CGRect(x: 16, y: stageY + stageH + 8, width: bounds.width - 32, height: 18)
 
-        // ステップ1の下部（下から: アルバム＋縦横比→操作ゾーン）
+        // ステップ1の下部（アルバムボタンは画面幅いっぱいで、縦横比に影響されない）
         let albumY = bounds.height - safeBottom - 62
-        albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW - 60, height: 52)
-        aspectButton.frame = CGRect(x: stageX + stageW - 52, y: albumY, width: 52, height: 52)
+        albumButton.frame = CGRect(x: 16, y: albumY, width: bounds.width - 32, height: 52)
+        // 縦横比ボタンはステージ内左下（ステージ座標）
+        aspectButton.frame = CGRect(x: 12, y: stageH - 54, width: 58, height: 42)
         let zoneY = albumY - 10 - 76
         shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
         // 切替アイコンはシャッターから程よい距離（中心±105pt）に置く
@@ -1942,6 +1954,19 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             width: w,
             height: h
         )
+    }
+
+    // テンプレート2のコラージュの当たり判定（ステージ座標）。Web側が描画実寸から計算した比率を変換する
+    private func overlayHitRectInStage() -> CGRect {
+        guard let f = overlayHitFrac else { return .null }
+        let b = stageView.bounds
+        guard b.width > 0 else { return .null }
+        let k = b.width / canvasW
+        let w = b.width * overlayScale
+        let h = b.height * overlayScale
+        let ox = (b.width - w) / 2 + overlayOffX * k
+        let oy = (b.height - h) / 2 + overlayOffY * k
+        return CGRect(x: ox + f.minX * w, y: oy + f.minY * h, width: f.width * w, height: f.height * h)
     }
 
     private func layoutToolButtons() {
@@ -1991,11 +2016,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                 hintLabel.text = ""
             }
         } else if mediaKind == .photo {
-            hintLabel.text = templateIndex == 2 ? "ドラッグ・ピンチでコラージュの位置と大きさを調整できます" : "ドラッグ・ピンチで写真の位置を調整できます"
+            hintLabel.text = templateIndex == 2 ? "コラージュの上では移動・大きさ、外側では写真を調整できます" : "ドラッグ・ピンチで写真の位置を調整できます"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "camera", title: "撮り直す")
         } else if mediaKind == .video {
-            hintLabel.text = templateIndex == 2 ? "ドラッグ・ピンチでコラージュを調整、下のバーで動画をトリミング" : "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
+            hintLabel.text = templateIndex == 2 ? "コラージュの上では移動・大きさ、外側では写真を調整、下のバーでトリミング" : "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "video", title: "撮り直す")
         }
@@ -2225,7 +2250,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         aspectSquare.toggle()
         canvasW = 1080
         canvasH = aspectSquare ? 1080 : 1920
-        setCamIcon(aspectButton, symbol: aspectSquare ? "rectangle.portrait" : "square")
+        aspectButton.setTitle(aspectSquare ? "1:1" : "9:16", for: .normal)
         UIView.animate(withDuration: 0.3) {
             self.layoutAll()
         }
@@ -2249,10 +2274,17 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     // Web側から新しいオーバーレイが届いたら差し替える（古い応答は捨てる）
-    func applyOverlay(_ image: UIImage, template: Int, w: Int, h: Int) {
+    func applyOverlay(_ image: UIImage, template: Int, w: Int, h: Int, hit: [String: Any]? = nil) {
         guard template == templateIndex, w == Int(canvasW), h == Int(canvasH) else { return }
         overlayImage = image
         overlayView.image = image
+        if template == 2, let hit = hit,
+           let hx = hit["x"] as? Double, let hy = hit["y"] as? Double,
+           let hw = hit["w"] as? Double, let hh = hit["h"] as? Double {
+            overlayHitFrac = CGRect(x: hx, y: hy, width: hw, height: hh)
+        } else if template != 2 {
+            overlayHitFrac = nil
+        }
         if step == 2 {
             refreshFinalCache()
         }
@@ -2528,8 +2560,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        // テンプレート2のステップ2では、ドラッグでコラージュ（オーバーレイ）の位置を動かす
-        if step == 2 && templateIndex == 2 {
+        // テンプレート2のステップ2: コラージュの当たり判定の中ならコラージュ移動、外なら背景（写真）移動
+        if gesture.state == .began {
+            panForOverlay = step == 2 && templateIndex == 2 && overlayHitRectInStage().contains(gesture.location(in: stageView))
+        }
+        if step == 2 && templateIndex == 2 && panForOverlay {
             if gesture.state == .ended || gesture.state == .cancelled {
                 refreshFinalCache()
                 return
@@ -2555,8 +2590,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-        // テンプレート2のステップ2では、ピンチでコラージュの大きさを変える
-        if step == 2 && templateIndex == 2 {
+        // テンプレート2のステップ2: 当たり判定の中のピンチはコラージュの大きさ、外のピンチは背景（写真）の拡大縮小
+        if gesture.state == .began {
+            pinchForOverlay = step == 2 && templateIndex == 2 && overlayHitRectInStage().contains(gesture.location(in: stageView))
+        }
+        if step == 2 && templateIndex == 2 && pinchForOverlay {
             if gesture.state == .ended || gesture.state == .cancelled {
                 refreshFinalCache()
                 return

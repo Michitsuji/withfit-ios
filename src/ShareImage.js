@@ -456,6 +456,9 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
 // 種目ごとの記録は出さず、主要スタッツと「セットごとの負荷量グラフ（青い線のみ）」と
 // ワードマークを画面中央に縦に並べる。配置ブロック全体はSwift側でドラッグ移動できる
 // （このPNG自体は中央配置で描き、Swiftがオフセットを加える）。
+// テンプレート2のコラージュの当たり判定（キャンバス比率）。描画のたびに更新される
+let lastMinimalHitFrac = null;
+
 function drawShareCardMinimal(ctx, model, opts = {}) {
   const W = opts.w || 1080;
   const H = opts.h || 1920;
@@ -482,6 +485,9 @@ function drawShareCardMinimal(ctx, model, opts = {}) {
   const markGap = 40;
   const totalH = pairH * 3 + pairGap * 2 + graphGap + graphH + markGap + markH;
   let y = (H - totalH) / 2;
+  const blockTop = y;
+  let hitMinX = cx;
+  let hitMaxX = cx;
 
   const drawPair = (label, numText, unitText) => {
     ctx.textAlign = 'center';
@@ -494,6 +500,8 @@ function drawShareCardMinimal(ctx, model, opts = {}) {
     ctx.font = `700 44px ${FONT}`;
     const unitW = unitText ? ctx.measureText(unitText).width : 0;
     const startX = cx - (numW + unitW) / 2;
+    hitMinX = Math.min(hitMinX, startX);
+    hitMaxX = Math.max(hitMaxX, startX + numW + unitW);
     ctx.textAlign = 'left';
     ctx.font = `900 100px ${MONO}`;
     ctx.fillStyle = COL.white;
@@ -523,13 +531,26 @@ function drawShareCardMinimal(ctx, model, opts = {}) {
     const maxV = Math.max(...vols);
     const minV = Math.min(...vols);
     const range = Math.max(1, maxV - minV);
+    const pts = vols.map((v, i) => [
+      gx + (gw * i) / (vols.length - 1),
+      gy + graphH - ((v - minV) / range) * (graphH - 24) - 12,
+    ]);
+    hitMinX = Math.min(hitMinX, gx);
+    hitMaxX = Math.max(hitMaxX, gx + gw);
+    // 点の間を曲線でなめらかにつなぐ（Catmull-Rom）
     ctx.beginPath();
-    vols.forEach((v, i) => {
-      const px = gx + (gw * i) / (vols.length - 1);
-      const py = gy + graphH - ((v - minV) / range) * (graphH - 24) - 12;
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    });
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(pts.length - 1, i + 2)];
+      ctx.bezierCurveTo(
+        p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+        p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
+        p2[0], p2[1]
+      );
+    }
     ctx.strokeStyle = COL.brand;
     ctx.lineWidth = 8;
     ctx.lineJoin = 'round';
@@ -550,6 +571,15 @@ function drawShareCardMinimal(ctx, model, opts = {}) {
   ctx.fillText('With', markX, y);
   ctx.fillStyle = COL.brand;
   ctx.fillText('Fit', markX + wWith, y);
+  hitMinX = Math.min(hitMinX, markX);
+  hitMaxX = Math.max(hitMaxX, markX + wWith + wFit);
+  // コラージュの当たり判定（少しだけ余白を持たせたギリギリの矩形、キャンバス比率）
+  lastMinimalHitFrac = {
+    x: Math.max(0, (hitMinX - 30) / W),
+    y: Math.max(0, (blockTop - 24) / H),
+    w: Math.min(1, (hitMaxX - hitMinX + 60) / W),
+    h: Math.min(1, (totalH + 48) / H),
+  };
 
   ctx.textAlign = 'left';
   ctx.shadowColor = 'transparent';
@@ -593,7 +623,7 @@ function installShareOverlayResponder() {
         reader.readAsDataURL(blob);
       });
       if (!base64) return;
-      postNativeMessage({ type: 'SHARE_OVERLAY_DATA', overlay: base64, template, w, h });
+      postNativeMessage({ type: 'SHARE_OVERLAY_DATA', overlay: base64, template, w, h, hit: template === 2 ? lastMinimalHitFrac : null });
     } catch (e) {}
   });
 }
