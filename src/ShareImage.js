@@ -200,15 +200,24 @@ function packColumns(blocks, maxCols, k, budget, overflowLast = false) {
       if (used + gapH > budget && used > 0) newColumn();
       else if (used > 0) { cur().push({ kind: 'gap', y: used, h: gapH }); used += gapH; }
     }
-    // 見出しは最低1行と一緒に置く
-    const need = headerH + (block.rows.length ? rowH : 0);
+    // 1セット（メイン行＋そのドロップ/スーパー行）は列を跨がないよう、ひとまとめにする
+    const units = [];
+    block.rows.forEach((row) => {
+      if (row.indent > 0 && units.length) units[units.length - 1].push(row);
+      else units.push([row]);
+    });
+    // 見出しは最初の1セットと一緒に置く
+    const need = headerH + (units.length ? units[0].length * rowH : 0);
     if (used > 0 && used + need > budget) newColumn();
     cur().push({ kind: 'header', y: used, h: headerH, text: block.name });
     used += headerH;
-    block.rows.forEach((row) => {
-      if (used > 0 && used + rowH > budget) newColumn();
-      cur().push({ kind: row.kind, y: used, h: rowH, row });
-      used += rowH;
+    units.forEach((unit) => {
+      // セット単位で収まらない場合は、セットの初めから新しい列にする
+      if (used > 0 && used + unit.length * rowH > budget) newColumn();
+      unit.forEach((row) => {
+        cur().push({ kind: row.kind, y: used, h: rowH, row });
+        used += rowH;
+      });
     });
   });
   return columns.length <= maxCols ? columns : null;
