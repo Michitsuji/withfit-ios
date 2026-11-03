@@ -2,7 +2,7 @@
 // App.js — メインアプリケーションコンポーネント
 // ==========================================
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon } from 'lucide-react';
+import { Activity, Bell, Heart, MessageCircle, UserPlus, LogOut, Flame, ChevronRight, ChevronLeft, MapPin, Clock, VolumeX, Volume2, X, Play, Lock, Home, Dumbbell, PlusCircle, Users, Settings, Calendar as CalendarIcon, Check } from 'lucide-react';
 import { GoogleAuthProvider, OAuthProvider, signInWithCredential, signInWithCustomToken, getRedirectResult, signInAnonymously, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 
 import { setDoc, doc, getDoc, deleteField, collection, onSnapshot, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
@@ -3257,14 +3257,19 @@ export default function App() {
 
       {editingPost && <EditWorkoutModal post={editingPost} gyms={allGyms} exercises={exercises} onClose={() => setEditingPost(null)} onSave={handleUpdateWorkout} myPastPosts={posts.filter(p => p.author === currentUser)} />}
       {sharePrompt && (
-        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setSharePrompt(null)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="text-lg font-bold text-slate-800 dark:text-slate-100 mb-1">投稿が完了しました 🎉</div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">写真に記録を重ねたシェア画像を作りますか？</p>
-            <div className="space-y-2.5">
-              <button onClick={() => { if (isNativeIosApp()) { openShareEditorNative(sharePrompt, 'camera'); } else { setShareTarget({ post: sharePrompt, autoPick: 'camera' }); } setSharePrompt(null); }} className="w-full bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">📸 写真を撮影</button>
-              <button onClick={() => { if (isNativeIosApp()) { openShareEditorNative(sharePrompt, 'album'); } else { setShareTarget({ post: sharePrompt, autoPick: 'album' }); } setSharePrompt(null); }} className="w-full bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">🖼 アルバムから選ぶ</button>
-              <button onClick={() => setSharePrompt(null)} className="w-full text-slate-500 dark:text-slate-400 font-bold rounded-xl py-2.5">後で</button>
+        <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4" onClick={() => setSharePrompt(null)}>
+          <div className="bg-white dark:bg-slate-900 rounded-3xl px-6 pt-7 pb-5 w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-center mb-4">
+              <div className="w-11 h-11 rounded-full bg-slate-900 dark:bg-white flex items-center justify-center">
+                <Check size={20} strokeWidth={3} className="text-white dark:text-slate-900" />
+              </div>
+            </div>
+            <div className="text-center text-lg font-black tracking-tight text-slate-900 dark:text-white mb-1.5">投稿が完了しました</div>
+            <p className="text-center text-[13px] text-slate-400 dark:text-slate-500 mb-6">記録を重ねたシェア画像を作成しますか？</p>
+            <div className="space-y-2">
+              <button onClick={() => { if (isNativeIosApp()) { openShareEditorNative(sharePrompt, 'camera'); } else { setShareTarget({ post: sharePrompt, autoPick: 'camera' }); } setSharePrompt(null); }} className="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold rounded-2xl py-3.5 text-[15px] active:scale-[0.98] transition-transform">写真を撮影</button>
+              <button onClick={() => { if (isNativeIosApp()) { openShareEditorNative(sharePrompt, 'album'); } else { setShareTarget({ post: sharePrompt, autoPick: 'album' }); } setSharePrompt(null); }} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold rounded-2xl py-3.5 text-[15px] active:scale-[0.98] transition-transform">アルバムから選ぶ</button>
+              <button onClick={() => setSharePrompt(null)} className="w-full text-slate-400 dark:text-slate-500 font-bold rounded-2xl py-2 text-sm">後で</button>
             </div>
           </div>
         </div>

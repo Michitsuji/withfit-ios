@@ -14,6 +14,8 @@ const CW = 1080;
 const CH = 1920;
 const MX = 56;
 const FONT = '"Hiragino Kaku Gothic ProN", -apple-system, BlinkMacSystemFont, sans-serif';
+// 投稿カードの数値と同じ書体（等幅・最太）: カード側は font-mono + font-black
+const MONO = '"SF Mono", ui-monospace, Menlo, monospace';
 
 const COL = {
   white: '#ffffff',
@@ -332,13 +334,14 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
     });
   });
 
-  // 下部サマリー（v10デザイン）
+  // 下部サマリー（v10デザイン）※数値は投稿カードと同じ等幅・最太フォント
   const { exCount, sets, durMin, volume, calories } = model.stats;
-  const segW = (segs) => segs.reduce((acc, [t, px]) => { ctx.font = `700 ${px}px ${FONT}`; return acc + ctx.measureText(t).width; }, 0);
+  const fontFor = (px, mono) => (mono ? `900 ${px}px ${MONO}` : `700 ${px}px ${FONT}`);
+  const segW = (segs) => segs.reduce((acc, [t, px, , mono]) => { ctx.font = fontFor(px, mono); return acc + ctx.measureText(t).width; }, 0);
   const drawSegs = (x, yTop, basePx, segs) => {
     let cx = x;
-    segs.forEach(([t, px, color]) => {
-      ctx.font = `700 ${px}px ${FONT}`;
+    segs.forEach(([t, px, color, mono]) => {
+      ctx.font = fontFor(px, mono);
       ctx.fillStyle = color || COL.white;
       ctx.fillText(t, cx, yTop + (basePx - px));
       cx += ctx.measureText(t).width;
@@ -347,14 +350,14 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
   };
 
   const groups = [
-    [[String(exCount), 132], ['種目', 64]],
-    [[String(sets), 132], [' set', 64]],
+    [[String(exCount), 132, null, true], ['種目', 64]],
+    [[String(sets), 132, null, true], [' set', 64]],
   ];
   if (durMin > 0) {
     const h = Math.floor(durMin / 60);
     const m = durMin % 60;
-    if (h > 0) groups.push([[String(h), 80], [' h ', 42], [String(m), 80], [' m', 42]]);
-    else groups.push([[String(m), 132], [' m', 64]]);
+    if (h > 0) groups.push([[String(h), 80, null, true], [' h ', 42], [String(m), 80, null, true], [' m', 42]]);
+    else groups.push([[String(m), 132, null, true], [' m', 64]]);
   }
   const widths = groups.map(segW);
   const totalW = widths.reduce((a, b) => a + b, 0);
@@ -371,7 +374,7 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
     ctx.fillStyle = COL.gray;
     ctx.fillText(label, x2, Y2 + 32);
     x2 += ctx.measureText(label).width + 14;
-    ctx.font = `700 54px ${FONT}`;
+    ctx.font = `900 54px ${MONO}`;
     ctx.fillStyle = COL.white;
     ctx.fillText(numText, x2, Y2 + 8);
     x2 += ctx.measureText(numText).width + 6;
