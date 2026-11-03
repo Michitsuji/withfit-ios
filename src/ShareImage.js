@@ -7,7 +7,7 @@
 // ==========================================
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Camera, Image as ImageIcon, Share, RotateCcw, Download } from 'lucide-react';
-import { calculateWorkoutTotals } from './utils';
+import { calculateWorkoutTotals, calcSetVolume } from './utils';
 import { isNativeIosApp, postNativeMessage, triggerHaptic, requestShareCamera, saveImageNative, shareToInstagramStoriesNative } from './nativeBridge';
 
 const CW = 1080;
@@ -148,10 +148,36 @@ export function buildShareModel(post) {
     if (rows.length) blocks.push({ name: item.exerciseName || '', rows });
   });
 
+  // グラフ用: セット（スーパーセットは1ラウンド）ごとの負荷量を順番に並べる（有酸素は除く）
+  const graphVolumes = [];
+  (processedItems.length ? processedItems : items).forEach((item) => {
+    if (item.category === '有酸素' || item.weightType === 'cardio') return;
+    (item.sets || []).forEach((set) => {
+      let v = calcSetVolume(set, item.weightType, baseWeight);
+      if (item.isDropSet && set.dropSets) {
+        set.dropSets.forEach((ds) => { v += calcSetVolume(ds, item.weightType, baseWeight); });
+      }
+      if (item.isSuperSet && item.superExerciseName) {
+        v += calcSetVolume({ weight: set.superWeight, reps: set.superReps, lReps: set.superLReps, rReps: set.superRReps, forcedReps: set.superForcedReps }, item.superWeightType || 'total', baseWeight);
+        if (item.isDropSet && set.superDropSets) {
+          set.superDropSets.forEach((ds) => { v += calcSetVolume({ weight: ds.superWeight, reps: ds.superReps, lReps: ds.superLReps, rReps: ds.superRReps, forcedReps: ds.superForcedReps }, item.superWeightType || 'total', baseWeight); });
+        }
+      }
+      if (item.isSuperSet && item.superExerciseName3) {
+        v += calcSetVolume({ weight: set.superWeight3, reps: set.superReps3, lReps: set.superLReps3, rReps: set.superRReps3, forcedReps: set.superForcedReps3 }, item.superWeightType3 || 'total', baseWeight);
+        if (item.isDropSet && set.superDropSets3) {
+          set.superDropSets3.forEach((ds) => { v += calcSetVolume({ weight: ds.superWeight3, reps: ds.superReps3, lReps: ds.superLReps3, rReps: ds.superRReps3, forcedReps: ds.superForcedReps3 }, item.superWeightType3 || 'total', baseWeight); });
+        }
+      }
+      graphVolumes.push(Math.round(v));
+    });
+  });
+
   const durMin = post.duration ? Math.round(post.duration / 60000) : 0;
   return {
     header,
     blocks,
+    graphVolumes,
     stats: { exCount: items.length, sets, durMin, volume: Math.round(volume || 0), calories: Math.round(calories || 0) },
   };
 }
@@ -188,8 +214,8 @@ function packColumns(blocks, maxCols, k, budget, overflowLast = false) {
   return columns.length <= maxCols ? columns : null;
 }
 
-function layoutBlocks(blocks) {
-  const budget = 1090;
+function layoutBlocks(blocks, budgetCap = 1090) {
+  const budget = budgetCap;
   let cols = packColumns(blocks, 1, 1, budget);
   if (cols) return { columns: cols, k: 1 };
   cols = packColumns(blocks, 2, 0.86, budget);
@@ -204,6 +230,8 @@ function layoutBlocks(blocks) {
 // opts.transparent: 背景・写真を描かず文字とグラデだけ（ライブカメラの重ね表示用）
 // opts.mirror: 写真を左右反転して描く（インカメラ撮影用）
 function drawShareCard(ctx, img, view, model, opts = {}) {
+  const CW = opts.w || 1080;
+  const CH = opts.h || 1920;
   ctx.clearRect(0, 0, CW, CH);
   if (!opts.transparent) {
     ctx.fillStyle = '#000';
@@ -230,17 +258,19 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
     }
   }
 
-  // グラデーション（上・下）
-  let g = ctx.createLinearGradient(0, 0, 0, 560);
+  // グラデーション（上・下）※高さはキャンバスの縦に比例させる
+  const topGradH = Math.round(560 * CH / 1920);
+  const bottomGradH = Math.round(640 * CH / 1920);
+  let g = ctx.createLinearGradient(0, 0, 0, topGradH);
   g.addColorStop(0, 'rgba(0,0,0,0.43)');
   g.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, CW, 560);
-  g = ctx.createLinearGradient(0, CH - 640, 0, CH);
+  ctx.fillRect(0, 0, CW, topGradH);
+  g = ctx.createLinearGradient(0, CH - bottomGradH, 0, CH);
   g.addColorStop(0, 'rgba(0,0,0,0)');
   g.addColorStop(1, 'rgba(0,0,0,0.86)');
   ctx.fillStyle = g;
-  ctx.fillRect(0, CH - 640, CW, 640);
+  ctx.fillRect(0, CH - bottomGradH, CW, bottomGradH);
 
   ctx.textBaseline = 'top';
   ctx.shadowColor = 'rgba(0,0,0,0.45)';
@@ -252,8 +282,8 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
   ctx.fillStyle = COL.white;
   ctx.fillText(model.header, MX, 44);
 
-  // 記録（列レイアウト）
-  const { columns, k } = layoutBlocks(model.blocks);
+  // 記録（列レイアウト）※予算はキャンバスの縦に合わせて絞る（正方形でも下部と重ねない）
+  const { columns, k } = layoutBlocks(model.blocks, Math.min(1090, CH - 500));
   const nCols = columns.length;
   const gapX = 36;
   const colW = (CW - MX * 2 - gapX * (nCols - 1)) / nCols;
@@ -368,10 +398,10 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
     [[String(sets), 132, null, true], [' set', 64]],
   ];
   if (durMin > 0) {
+    // 時間は1時間未満でも必ず 0h 〇m 形式で出す
     const h = Math.floor(durMin / 60);
     const m = durMin % 60;
-    if (h > 0) groups.push([[String(h), 80, null, true], [' h ', 42], [String(m), 80, null, true], [' m', 42]]);
-    else groups.push([[String(m), 132, null, true], [' m', 64]]);
+    groups.push([[String(h), 80, null, true], [' h ', 42], [String(m), 80, null, true], [' m', 42]]);
   }
   const widths = groups.map(segW);
   const totalW = widths.reduce((a, b) => a + b, 0);
@@ -413,11 +443,156 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
   ctx.shadowOffsetY = 0;
 }
 
+// ---- テンプレート2（Strava風・シンプル） ----
+// 種目ごとの記録は出さず、主要スタッツと「セットごとの負荷量グラフ（青い線のみ）」と
+// ワードマークを画面中央に縦に並べる。配置ブロック全体はSwift側でドラッグ移動できる
+// （このPNG自体は中央配置で描き、Swiftがオフセットを加える）。
+function drawShareCardMinimal(ctx, model, opts = {}) {
+  const W = opts.w || 1080;
+  const H = opts.h || 1920;
+  ctx.clearRect(0, 0, W, H);
+  if (!opts.transparent) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+  }
+  const { sets, durMin, volume } = model.stats;
+  const vols = model.graphVolumes || [];
+  const cx = W / 2;
+
+  ctx.textBaseline = 'top';
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 7;
+  ctx.shadowOffsetY = 2;
+
+  // ブロック全体の高さを数えて、画面中央に置く
+  const pairH = 36 + 8 + 100; // ラベル + 間隔 + 数値
+  const pairGap = 40;
+  const graphH = vols.length >= 2 ? 250 : 0;
+  const graphGap = vols.length >= 2 ? 44 : 0;
+  const markH = 64;
+  const markGap = 40;
+  const totalH = pairH * 3 + pairGap * 2 + graphGap + graphH + markGap + markH;
+  let y = (H - totalH) / 2;
+
+  const drawPair = (label, numText, unitText) => {
+    ctx.textAlign = 'center';
+    ctx.font = `700 36px ${FONT}`;
+    ctx.fillStyle = COL.gray;
+    ctx.fillText(label, cx, y);
+    // 数値（等幅・最太）と単位を一体として中央寄せする
+    ctx.font = `900 100px ${MONO}`;
+    const numW = ctx.measureText(numText).width;
+    ctx.font = `700 44px ${FONT}`;
+    const unitW = unitText ? ctx.measureText(unitText).width : 0;
+    const startX = cx - (numW + unitW) / 2;
+    ctx.textAlign = 'left';
+    ctx.font = `900 100px ${MONO}`;
+    ctx.fillStyle = COL.white;
+    ctx.fillText(numText, startX, y + 44);
+    if (unitText) {
+      ctx.font = `700 44px ${FONT}`;
+      ctx.fillStyle = COL.gray;
+      ctx.fillText(unitText, startX + numW, y + 44 + 48);
+    }
+    y += pairH + pairGap;
+  };
+
+  const hh = Math.floor(durMin / 60);
+  const mm = durMin % 60;
+  drawPair('時間', `${hh}h ${mm}m`, '');
+  if (volume > 0) drawPair('総負荷量', volume.toLocaleString(), ' kg');
+  else drawPair('種目数', String(model.stats.exCount), ' 種目');
+  drawPair('セット数', String(sets), ' set');
+  y -= pairGap;
+
+  // 負荷量グラフ（線のみ。縦軸=そのセットの負荷量、横軸=何セット目か）
+  if (vols.length >= 2) {
+    y += graphGap;
+    const gw = W * 0.62;
+    const gx = cx - gw / 2;
+    const gy = y;
+    const maxV = Math.max(...vols);
+    const minV = Math.min(...vols);
+    const range = Math.max(1, maxV - minV);
+    ctx.beginPath();
+    vols.forEach((v, i) => {
+      const px = gx + (gw * i) / (vols.length - 1);
+      const py = gy + graphH - ((v - minV) / range) * (graphH - 24) - 12;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.strokeStyle = COL.brand;
+    ctx.lineWidth = 8;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.stroke();
+    y += graphH;
+  }
+
+  // ワードマーク（中央）
+  y += markGap;
+  ctx.font = `700 58px ${FONT}`;
+  const wFit = ctx.measureText('Fit').width;
+  const wWith = ctx.measureText('With').width;
+  const markX = cx - (wWith + wFit) / 2;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = COL.white;
+  ctx.fillText('With', markX, y);
+  ctx.fillStyle = COL.brand;
+  ctx.fillText('Fit', markX + wWith, y);
+
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+}
+
 // ---- ネイティブ編集画面（全面Swift）への入口 ----
 // 記録の描画だけを透明PNG（オーバーレイ）にしてSwiftへ渡し、写真の選択・
 // 位置調整・合成・保存・共有はすべてSwift側の編集画面で行う。
+let lastSharePost = null;
+let overlayResponderInstalled = false;
+
+// Swift側でテンプレート/縦横比が切り替わったら、新しいオーバーレイを描き直して返す
+function installShareOverlayResponder() {
+  if (overlayResponderInstalled || typeof window === 'undefined') return;
+  overlayResponderInstalled = true;
+  window.addEventListener('message', async (event) => {
+    const data = event && event.data;
+    if (!data || data.type !== 'REQUEST_SHARE_OVERLAY' || !lastSharePost) return;
+    try {
+      const model = buildShareModel(lastSharePost);
+      const w = Number(data.w) || CW;
+      const h = Number(data.h) || CH;
+      const template = data.template === 2 ? 2 : 1;
+      const oc = document.createElement('canvas');
+      oc.width = w;
+      oc.height = h;
+      const octx = oc.getContext('2d');
+      if (template === 2) {
+        drawShareCardMinimal(octx, model, { w, h, transparent: true });
+      } else {
+        drawShareCard(octx, null, { s: 1, x: 0, y: 0 }, model, { transparent: true, w, h });
+      }
+      const blob = await new Promise((res) => oc.toBlob(res, 'image/png'));
+      if (!blob) return;
+      const base64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(blob);
+      });
+      if (!base64) return;
+      postNativeMessage({ type: 'SHARE_OVERLAY_DATA', overlay: base64, template, w, h });
+    } catch (e) {}
+  });
+}
+
 export async function openShareEditorNative(post, autoOpen = 'none') {
   try {
+    lastSharePost = post;
+    installShareOverlayResponder();
     const model = buildShareModel(post);
     const oc = document.createElement('canvas');
     oc.width = CW;

@@ -401,10 +401,26 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 let editor = ShareEditorViewController()
                 editor.overlayImage = overlay
                 editor.autoOpen = autoOpen
+                editor.onOverlayRequest = { [weak self] payload in
+                    self?.sendToWeb(payload: payload)
+                }
                 editor.modalPresentationStyle = .fullScreen
+                self.shareEditorVC = editor
                 var topVC: UIViewController = self
                 while let presented = topVC.presentedViewController { topVC = presented }
                 topVC.present(editor, animated: true)
+            }
+
+        case "SHARE_OVERLAY_DATA":
+            // 編集画面でテンプレート/縦横比が切り替わった際の、新しいオーバーレイの受け渡し
+            guard let b64 = payload["overlay"] as? String,
+                  let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+                  let overlay = UIImage(data: data) else { break }
+            let template = payload["template"] as? Int ?? 1
+            let w = payload["w"] as? Int ?? 1080
+            let h = payload["h"] as? Int ?? 1920
+            DispatchQueue.main.async { [weak self] in
+                self?.shareEditorVC?.applyOverlay(overlay, template: template, w: w, h: h)
             }
 
         case "SAVE_IMAGE":
@@ -602,6 +618,8 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
 
     // MARK: - Swift -> React Messaging
     // 共有シートを最前面の画面から表示する
+    private weak var shareEditorVC: ShareEditorViewController?
+
     private func presentShareSheet(image: UIImage) {
         let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
         avc.popoverPresentationController?.sourceView = self.view
@@ -1448,6 +1466,17 @@ final class ShareCameraViewController: UIViewController, AVCaptureVideoDataOutpu
 final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate {
     var overlayImage: UIImage?
     var autoOpen: String = "none"
+    // テンプレート/縦横比の切替時に、新しいオーバーレイをWeb側へ依頼するための窓口
+    var onOverlayRequest: (([String: Any]) -> Void)?
+
+    // テンプレート（1=記録コラージュ / 2=Strava風シンプル）と縦横比（9:16 / 1:1）
+    private var templateIndex = 1
+    private var aspectSquare = false
+    private var canvasW: CGFloat = 1080
+    private var canvasH: CGFloat = 1920
+    // テンプレート2のコラージュ位置（Canvas座標のオフセット）
+    private var overlayOffX: CGFloat = 0
+    private var overlayOffY: CGFloat = 0
 
     private enum MediaKind { case none, photo, video }
     private var step: Int = 1
@@ -1500,6 +1529,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var shutterInner: UIView!
     private var modeButton: UIButton!
     private var flipButton: UIButton!
+    private var aspectButton: UIButton!
+    private var templateButton: UIButton!
     private var actionBar: UIVisualEffectView!
     private var changeButton: UIButton!
     private var retakeButton: UIButton!
@@ -1638,11 +1669,15 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         albumButton = makeSourceButton(symbol: "photo.on.rectangle", title: "アルバムから選ぶ", filled: false, action: #selector(openPickerTapped))
         view.addSubview(albumButton)
 
-        // カメラ操作（左端=写真/動画モード切替アイコン、中央=シャッター、右端=前後切替アイコン）
+        // カメラ操作（シャッター左=写真/動画切替・前後切替、右=縦横比・テンプレート切替）
         modeButton = makeCamIconButton(symbol: "video.fill", action: #selector(modeTapped))
         flipButton = makeCamIconButton(symbol: "arrow.triangle.2.circlepath.camera.fill", action: #selector(flipTapped))
+        aspectButton = makeCamIconButton(symbol: "square", action: #selector(aspectTapped))
+        templateButton = makeCamIconButton(symbol: "chart.bar.fill", action: #selector(templateTapped))
         view.addSubview(modeButton)
         view.addSubview(flipButton)
+        view.addSubview(aspectButton)
+        view.addSubview(templateButton)
         shutterButton = UIButton(type: .custom)
         shutterButton.backgroundColor = UIColor.black.withAlphaComponent(0.05)
         shutterButton.layer.cornerRadius = 36
@@ -1789,14 +1824,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         // 背景行が無くなった分、ステップ1のステージが大きく使える
         let bottomH = safeBottom + (step == 1 ? 178 : 108)
         let availH = bounds.height - topH - bottomH
-        let stageW = max(200, min(bounds.width - 24, availH * 9 / 16, 460))
-        let stageH = stageW * 16 / 9
+        let stageW = max(200, min(bounds.width - 24, availH * canvasW / canvasH, 460))
+        let stageH = stageW * canvasH / canvasW
         let stageX = (bounds.width - stageW) / 2
         let stageY = topH + max(0, (availH - stageH) / 2)
         stageView.frame = CGRect(x: stageX, y: stageY, width: stageW, height: stageH)
         cameraView.frame = stageView.bounds
         previewLayer?.frame = cameraView.bounds
-        overlayView.frame = stageView.bounds
+        positionOverlayView()
         recordTimeLabel.frame = CGRect(x: stageW / 2 - 40, y: 12, width: 80, height: 24)
         updateMediaFrame()
 
@@ -1808,10 +1843,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let albumY = bounds.height - safeBottom - 62
         albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
         let zoneY = albumY - 10 - 76
-        shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
-        // 切替アイコンはシャッターから程よい距離（中心±105pt）に置く
-        modeButton.frame = CGRect(x: bounds.width / 2 - 105 - 26, y: zoneY + 12, width: 52, height: 52)
-        flipButton.frame = CGRect(x: bounds.width / 2 + 105 - 26, y: zoneY + 12, width: 52, height: 52)
+        let cxPt = bounds.width / 2
+        shutterButton.frame = CGRect(x: cxPt - 36, y: zoneY + 2, width: 72, height: 72)
+        // シャッター左にモード切替（内側）・前後切替（外側）、
+        // 右に縦横比（内側）・テンプレート切替（外側）を並べる
+        modeButton.frame = CGRect(x: cxPt - 88 - 24, y: zoneY + 14, width: 48, height: 48)
+        flipButton.frame = CGRect(x: cxPt - 146 - 24, y: zoneY + 14, width: 48, height: 48)
+        aspectButton.frame = CGRect(x: cxPt + 88 - 24, y: zoneY + 14, width: 48, height: 48)
+        templateButton.frame = CGRect(x: cxPt + 146 - 24, y: zoneY + 14, width: 48, height: 48)
 
         // ステップ2のツールバー
         let actionH: CGFloat = 74 + safeBottom
@@ -1821,6 +1860,17 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         busyOverlay.frame = view.bounds
         busySpinner.center = CGPoint(x: bounds.width / 2, y: bounds.height / 2 - 16)
         busyLabel.frame = CGRect(x: 16, y: bounds.height / 2 + 16, width: bounds.width - 32, height: 22)
+    }
+
+    // オーバーレイの表示位置（テンプレート2ではドラッグでずらせる）
+    private func positionOverlayView() {
+        let b = stageView.bounds
+        guard b.width > 0 else {
+            overlayView.frame = b
+            return
+        }
+        let k = b.width / canvasW
+        overlayView.frame = CGRect(x: overlayOffX * k, y: overlayOffY * k, width: b.width, height: b.height)
     }
 
     private func layoutToolButtons() {
@@ -1857,6 +1907,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         shutterButton.isHidden = !camUI
         modeButton.isHidden = !camUI
         flipButton.isHidden = !camUI
+        aspectButton.isHidden = !camUI
+        templateButton.isHidden = !camUI
         recordTimeLabel.isHidden = !(camUI && !cameraModePhoto)
         albumButton.isHidden = !inStep1
         actionBar.isHidden = inStep1
@@ -1868,11 +1920,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                 hintLabel.text = ""
             }
         } else if mediaKind == .photo {
-            hintLabel.text = "ドラッグ・ピンチで写真の位置を調整できます"
+            hintLabel.text = templateIndex == 2 ? "ドラッグでコラージュの位置、ピンチで写真を調整できます" : "ドラッグ・ピンチで写真の位置を調整できます"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "camera", title: "撮り直す")
         } else if mediaKind == .video {
-            hintLabel.text = "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
+            hintLabel.text = templateIndex == 2 ? "ドラッグでコラージュの位置、ピンチで位置を調整（タップで再生/停止）" : "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "video", title: "撮り直す")
         }
@@ -2096,6 +2148,44 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         updateBars()
     }
 
+    // 縦横比の切替（現在のもの=9:16 / 正方形=1:1）。アイコンは切り替え先を出す
+    @objc private func aspectTapped() {
+        if isRecording { return }
+        aspectSquare.toggle()
+        canvasW = 1080
+        canvasH = aspectSquare ? 1080 : 1920
+        setCamIcon(aspectButton, symbol: aspectSquare ? "rectangle.portrait" : "square")
+        UIView.animate(withDuration: 0.3) {
+            self.layoutAll()
+        }
+        requestOverlayRefresh()
+    }
+
+    // テンプレートの切替（1=記録コラージュ / 2=Strava風）。アイコンは切り替え先を出す
+    @objc private func templateTapped() {
+        if isRecording { return }
+        templateIndex = (templateIndex == 1) ? 2 : 1
+        overlayOffX = 0
+        overlayOffY = 0
+        setCamIcon(templateButton, symbol: templateIndex == 1 ? "chart.bar.fill" : "list.bullet")
+        positionOverlayView()
+        requestOverlayRefresh()
+    }
+
+    private func requestOverlayRefresh() {
+        onOverlayRequest?(["type": "REQUEST_SHARE_OVERLAY", "template": templateIndex, "w": Int(canvasW), "h": Int(canvasH)])
+    }
+
+    // Web側から新しいオーバーレイが届いたら差し替える（古い応答は捨てる）
+    func applyOverlay(_ image: UIImage, template: Int, w: Int, h: Int) {
+        guard template == templateIndex, w == Int(canvasW), h == Int(canvasH) else { return }
+        overlayImage = image
+        overlayView.image = image
+        if step == 2 {
+            refreshFinalCache()
+        }
+    }
+
     @objc private func flipTapped() {
         if isRecording || !cameraActive { return }
         let target: AVCaptureDevice.Position = (currentPosition == .back) ? .front : .back
@@ -2279,10 +2369,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let w = ciImage.extent.width
         let h = ciImage.extent.height
         guard w > 0, h > 0 else { return }
-        // 1080x1920（9:16）に cover で切り抜く
-        let scale = max(1080 / w, 1920 / h)
+        // キャンバス（9:16 または 1:1）に cover で切り抜く
+        let scale = max(canvasW / w, canvasH / h)
         let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let cropRect = CGRect(x: (w * scale - 1080) / 2, y: (h * scale - 1920) / 2, width: 1080, height: 1920)
+        let cropRect = CGRect(x: (w * scale - canvasW) / 2, y: (h * scale - canvasH) / 2, width: canvasW, height: canvasH)
         guard let cgImage = ciContext.createCGImage(scaled, from: cropRect) else { return }
         let raw = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
         // キャプチャ由来の画像を通常のビットマップへ複写して切り離す
@@ -2297,7 +2387,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         }
     }
 
-    // MARK: メディアの配置（Canvas座標 1080x1920 で管理し、常に画面を覆う範囲に制限）
+    // MARK: メディアの配置（Canvas座標で管理し、常に画面を覆う範囲に制限）
     private func mediaSize() -> CGSize? {
         if mediaKind == .photo, let photo = photo { return photo.size }
         if mediaKind == .video, videoDisplaySize != .zero { return videoDisplaySize }
@@ -2308,12 +2398,12 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         guard let size = mediaSize() else { return (1, 0, 0, 0, 0) }
         let iw = size.width
         let ih = size.height
-        let base = max(1080 / iw, 1920 / ih)
+        let base = max(canvasW / iw, canvasH / ih)
         let cs = min(4, max(1, s))
         let dw = iw * base * cs
         let dh = ih * base * cs
-        let maxX = max(0, (dw - 1080) / 2)
-        let maxY = max(0, (dh - 1920) / 2)
+        let maxX = max(0, (dw - canvasW) / 2)
+        let maxY = max(0, (dh - canvasH) / 2)
         return (cs, min(maxX, max(-maxX, x)), min(maxY, max(-maxY, y)), maxX, maxY)
     }
 
@@ -2347,13 +2437,13 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         guard let size = mediaSize() else { return }
         let iw = size.width
         let ih = size.height
-        let base = max(1080 / iw, 1920 / ih)
+        let base = max(canvasW / iw, canvasH / ih)
         let dw = iw * base * viewS
         let dh = ih * base * viewS
-        let k = stageView.bounds.width / 1080
+        let k = stageView.bounds.width / canvasW
         let frame = CGRect(
-            x: ((1080 - dw) / 2 + viewX) * k,
-            y: ((1920 - dh) / 2 + viewY) * k,
+            x: ((canvasW - dw) / 2 + viewX) * k,
+            y: ((canvasH - dh) / 2 + viewY) * k,
             width: dw * k,
             height: dh * k
         )
@@ -2366,6 +2456,21 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        // テンプレート2のステップ2では、ドラッグでコラージュ（オーバーレイ）の位置を動かす
+        if step == 2 && templateIndex == 2 {
+            if gesture.state == .ended || gesture.state == .cancelled {
+                refreshFinalCache()
+                return
+            }
+            guard gesture.state == .changed else { return }
+            let t = gesture.translation(in: stageView)
+            gesture.setTranslation(.zero, in: stageView)
+            let k = canvasW / max(1, stageView.bounds.width)
+            overlayOffX = min(canvasW * 0.28, max(-canvasW * 0.28, overlayOffX + t.x * k))
+            overlayOffY = min(canvasH * 0.30, max(-canvasH * 0.30, overlayOffY + t.y * k))
+            positionOverlayView()
+            return
+        }
         if gesture.state == .ended || gesture.state == .cancelled {
             refreshFinalCache()
             return
@@ -2373,7 +2478,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         guard mediaSize() != nil, gesture.state == .changed else { return }
         let t = gesture.translation(in: stageView)
         gesture.setTranslation(.zero, in: stageView)
-        let k = 1080 / max(1, stageView.bounds.width)
+        let k = canvasW / max(1, stageView.bounds.width)
         applyView(s: viewS, x: viewX + t.x * k, y: viewY + t.y * k)
     }
 
@@ -2419,6 +2524,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         videoView.isHidden = true
         finalCache = nil
         cacheGeneration += 1
+        overlayOffX = 0
+        overlayOffY = 0
+        positionOverlayView()
     }
 
     private func setPhoto(_ image: UIImage) {
@@ -2441,7 +2549,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
             videoDisplaySize = CGSize(width: abs(rect.width), height: abs(rect.height))
         } else {
-            videoDisplaySize = CGSize(width: 1080, height: 1920)
+            videoDisplaySize = CGSize(width: canvasW, height: canvasH)
         }
         if player == nil {
             player = AVPlayer()
@@ -2524,7 +2632,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     // MARK: 合成（静止画）※必ず等倍（scale=1）で描く
     private func renderFinal() -> UIImage? {
         guard let overlay = overlayImage else { return nil }
-        let size = CGSize(width: 1080, height: 1920)
+        let size = CGSize(width: canvasW, height: canvasH)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -2535,12 +2643,12 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             if mediaKind == .photo, let photo = photo {
                 let iw = photo.size.width
                 let ih = photo.size.height
-                let base = max(1080 / iw, 1920 / ih)
+                let base = max(canvasW / iw, canvasH / ih)
                 let dw = iw * base * viewS
                 let dh = ih * base * viewS
-                photo.draw(in: CGRect(x: (1080 - dw) / 2 + viewX, y: (1920 - dh) / 2 + viewY, width: dw, height: dh))
+                photo.draw(in: CGRect(x: (canvasW - dw) / 2 + viewX, y: (canvasH - dh) / 2 + viewY, width: dw, height: dh))
             }
-            overlay.draw(in: CGRect(origin: .zero, size: size))
+            overlay.draw(in: CGRect(x: overlayOffX, y: overlayOffY, width: canvasW, height: canvasH))
         }
     }
 
@@ -2573,7 +2681,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true
 
-        let renderSize = CGSize(width: 1080, height: 1920)
+        let renderSize = CGSize(width: canvasW, height: canvasH)
         let comp = AVMutableVideoComposition()
         comp.renderSize = renderSize
         comp.frameDuration = CMTime(value: 1, timescale: 30)
@@ -2586,11 +2694,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let fixed = t.concatenating(CGAffineTransform(translationX: -uprightRect.minX, y: -uprightRect.minY))
         let iw = videoDisplaySize.width
         let ih = videoDisplaySize.height
-        let base = max(1080 / iw, 1920 / ih)
+        let base = max(canvasW / iw, canvasH / ih)
         let dw = iw * base * viewS
         let dh = ih * base * viewS
-        let dx = (1080 - dw) / 2 + viewX
-        let dyTop = (1920 - dh) / 2 + viewY
+        let dx = (canvasW - dw) / 2 + viewX
+        let dyTop = (canvasH - dh) / 2 + viewY
         let k = dw / max(1, iw)
         let final = fixed
             .concatenating(CGAffineTransform(scaleX: k, y: k))
@@ -2599,6 +2707,18 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         instruction.layerInstructions = [layerInstruction]
         comp.instructions = [instruction]
 
+        // テンプレート2でコラージュをずらしている場合は、その分を焼き込んだ
+        // オーバーレイ画像を用意する（レイヤー座標系の取り違えを避けるため）
+        var exportOverlay = overlay
+        if templateIndex == 2 && (overlayOffX != 0 || overlayOffY != 0) {
+            let oFormat = UIGraphicsImageRendererFormat()
+            oFormat.scale = 1
+            oFormat.opaque = false
+            exportOverlay = UIGraphicsImageRenderer(size: renderSize, format: oFormat).image { _ in
+                overlay.draw(in: CGRect(x: overlayOffX, y: overlayOffY, width: renderSize.width, height: renderSize.height))
+            }
+        }
+
         // 記録オーバーレイだけをアニメーションツールで重ねる（映像レイヤーは全面）
         let parentLayer = CALayer()
         let videoLayer = CALayer()
@@ -2606,7 +2726,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         parentLayer.frame = CGRect(origin: .zero, size: renderSize)
         videoLayer.frame = CGRect(origin: .zero, size: renderSize)
         overlayLayer.frame = CGRect(origin: .zero, size: renderSize)
-        overlayLayer.contents = overlay.cgImage
+        overlayLayer.contents = exportOverlay.cgImage
         parentLayer.addSublayer(videoLayer)
         parentLayer.addSublayer(overlayLayer)
         comp.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayers: [videoLayer], in: parentLayer)
