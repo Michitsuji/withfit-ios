@@ -346,6 +346,19 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             let style = payload["style"] as? String ?? "light"
             NativeAudioAndTimerManager.shared.triggerHaptic(style: style)
 
+        case "SHARE_IMAGE":
+            if let b64 = payload["image"] as? String,
+               let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+               let image = UIImage(data: data) {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+                    avc.popoverPresentationController?.sourceView = self.view
+                    avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+                    self.present(avc, animated: true)
+                }
+            }
+
         case "VIBRATE":
             NativeAudioAndTimerManager.shared.triggerHaptic(style: "vibrate")
 

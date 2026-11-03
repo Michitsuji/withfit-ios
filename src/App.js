@@ -12,6 +12,7 @@ import { generateId, generateFriendCode, calculateWorkoutTotals, getRelativeTime
 import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, LiquidGlassTabBar } from './CommonUI';
 import { TimelineView, WorkoutCard } from './WorkoutCard';
 import { EditWorkoutModal } from './WorkoutForm';
+import { ShareImageModal } from './ShareImage';
 import { DataView } from './DataView';
 import { RecordView } from './RecordView';
 import { ExercisesView } from './ExercisesView';
@@ -400,6 +401,8 @@ export default function App() {
   const [isDraftLoaded, setIsDraftLoaded] = useState(true);
   const [selectedCategories, setSelectedCategories] = useState(boot.draftCats);
   const [editingPost, setEditingPost] = useState(null);
+  const [sharePrompt, setSharePrompt] = useState(null);
+  const [shareTarget, setShareTarget] = useState(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [selectedFriendUser, setSelectedFriendUser] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -1917,6 +1920,9 @@ export default function App() {
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { isTraining: false, trainingStartTime: null, currentGymId: null, currentExerciseName: '', lastActive: Date.now(), jointPartnerId: null, hasSentStartNotification: deleteField(), hasSentForgotNotification: deleteField() }, { merge: true });
       }
       setDraftWorkoutItems([]); setSelectedCategories([]); setCurrentTab('timeline');
+      if (!manualStart && workoutItems && workoutItems.length > 0) {
+        setSharePrompt(newWorkoutObj);
+      }
       
       const myFriends = myInfo.friends || [];
       const authorName = myInfo.displayName || currentUser;
@@ -1935,6 +1941,10 @@ export default function App() {
         sendNotification(friendId, title, body, 'post', newDocId);
       });
     } catch (e) { console.error("Post error:", e); }
+  };
+
+  const handleShareImage = (post) => {
+    setShareTarget({ post, autoPick: null });
   };
 
   const handleUpdateWorkout = async (postId, updatedData) => {
@@ -3216,7 +3226,7 @@ export default function App() {
              <button onClick={handleLinkGoogle} className="bg-rose-500 hover:bg-rose-600 text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors">連携</button>
           </div>
         )}
-        {currentTab === 'timeline' && <TimelineView onRefresh={handleManualDiffCheck} onReport={handleReportContent} posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
+        {currentTab === 'timeline' && <TimelineView onRefresh={handleManualDiffCheck} onReport={handleReportContent} posts={visiblePosts} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onDelete={handleDeleteWorkout} onEdit={setEditingPost} accountsInfo={accountsInfo} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} onShareImage={handleShareImage} scrollToPostId={scrollToPostId} setScrollToPostId={setScrollToPostId} />}
         {currentTab === 'exercises' && <ExercisesView gyms={allGyms} exercises={exercises} posts={visiblePosts} accountsInfo={accountsInfo} currentUser={currentUser} myInfo={myInfo} setCurrentTab={setCurrentTab} onSendRequest={handleSendFriendRequest} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'record' && <RecordView onUserClick={setSelectedUserProfile} onStart={handleStartTraining} onPost={handlePostWorkout} onCancel={handleCancelTraining} onRequestJointTraining={handleRequestJointTraining} onAcceptJointTraining={handleAcceptJointTraining} onRejectJointTraining={handleRejectJointTraining} onCancelJointTraining={handleCancelJointTraining} onImportItem={handleImportExerciseItem} myInfo={myInfo} gyms={allGyms} exercises={exercises} workoutItems={draftWorkoutItems} setWorkoutItems={setDraftWorkoutItems} selectedCategories={selectedCategories} setSelectedCategories={setSelectedCategories} posts={visiblePosts} currentUser={currentUser} isManual={isRecordManual} setIsManual={setIsRecordManual} onActiveExerciseChange={handleActiveExerciseChange} accountsInfo={accountsInfo} />}
         {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
@@ -3241,6 +3251,20 @@ export default function App() {
       </main>
 
       {editingPost && <EditWorkoutModal post={editingPost} gyms={allGyms} exercises={exercises} onClose={() => setEditingPost(null)} onSave={handleUpdateWorkout} myPastPosts={posts.filter(p => p.author === currentUser)} />}
+      {sharePrompt && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setSharePrompt(null)}>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 w-full max-w-sm shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-lg font-bold text-slate-800 dark:text-slate-100 mb-1">投稿が完了しました 🎉</div>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">写真に記録を重ねたシェア画像を作りますか？</p>
+            <div className="space-y-2.5">
+              <button onClick={() => { setShareTarget({ post: sharePrompt, autoPick: 'camera' }); setSharePrompt(null); }} className="w-full bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">📸 写真を撮影</button>
+              <button onClick={() => { setShareTarget({ post: sharePrompt, autoPick: 'album' }); setSharePrompt(null); }} className="w-full bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">🖼 アルバムから選ぶ</button>
+              <button onClick={() => setSharePrompt(null)} className="w-full text-slate-500 dark:text-slate-400 font-bold rounded-xl py-2.5">後で</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {shareTarget && <ShareImageModal post={shareTarget.post} autoPick={shareTarget.autoPick} onClose={() => setShareTarget(null)} />}
       {selectedFriendUser && <FriendDetailModal friendUsername={selectedFriendUser} posts={posts} accountsInfo={accountsInfo} onClose={() => setSelectedFriendUser(null)} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} currentUser={currentUser} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
       
       {focusedPost && (
@@ -3251,7 +3275,7 @@ export default function App() {
                 <button onClick={() => setFocusedPost(null)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 bg-slate-100 dark:bg-slate-800 rounded-full"><X size={20} /></button>
              </div>
              <div className="p-4 overflow-y-auto flex-1">
-               <WorkoutCard post={focusedPost} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />
+               <WorkoutCard post={focusedPost} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onToggleLike={toggleLike} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} onShareImage={handleShareImage} />
              </div>
           </div>
         </div>
