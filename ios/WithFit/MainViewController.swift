@@ -1437,11 +1437,13 @@ final class ShareCameraViewController: UIViewController, AVCaptureVideoDataOutpu
 }
 
 // MARK: - Share Editor (シェア画像・動画の編集画面: 全面Swift)
-// 2段階UI: ステップ1=作成方法の選択（写真/動画/アルバム/背景）、ステップ2=編集・保存・共有。
-// 記録部分の描画は Web 側で作った透明PNG（overlayImage）を重ねるだけ。
-// 注意: 画像生成は必ず format.scale = 1（等倍）で行う。デフォルトは画面の倍率（3倍）に
-// なってしまい、3240x5760の巨大画像ができて共有・保存が固まる原因になる。
-final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIColorPickerViewControllerDelegate, UIGestureRecognizerDelegate {
+// 1画面に統合: ステップ1=作成（ステージ内蔵カメラで撮影/録画・アルバム・背景が同じ画面）、
+// ステップ2=編集・保存・共有。記録部分は Web 側の透明PNG（overlayImage）を重ねるだけ。
+// 注意: 画像生成は必ず format.scale = 1（等倍）。デフォルトは画面倍率（3倍）で
+// 3240x5760の巨大画像になり、共有・保存が固まる原因になる。
+// 共有シートの表示は v46 で実績のある手順に統一する（メインキューへ回してから、
+// 最前面の画面から、ポップオーバーの起点を画面中央にして表示）。
+final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIColorPickerViewControllerDelegate, UIGestureRecognizerDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate {
     var overlayImage: UIImage?
     var autoOpen: String = "none"
 
@@ -1465,11 +1467,33 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var viewX: CGFloat = 0
     private var viewY: CGFloat = 0
 
+    // 内蔵カメラ
+    private var cameraActive = false
+    private var cameraModePhoto = true
+    private var camSession: AVCaptureSession?
+    private let sessionQueue = DispatchQueue(label: "withfit.share.editor.camera")
+    private let videoDataOutput = AVCaptureVideoDataOutput()
+    private let movieOutput = AVCaptureMovieFileOutput()
+    private let ciContext = CIContext()
+    private var captureRequested = false
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var currentInput: AVCaptureDeviceInput?
+    private var currentDevice: AVCaptureDevice?
+    private var currentPosition: AVCaptureDevice.Position = .back
+    private var sessionConfigured = false
+    private var isRecording = false
+    private var discardRecording = false
+    private var recordTimer: Timer?
+    private var recordSeconds = 0
+
     private let stageView = UIView()
     private let backgroundView = UIImageView()
+    private let cameraView = UIView()
     private let photoView = UIImageView()
     private let videoView = UIView()
     private let overlayView = UIImageView()
+    private let focusIndicator = UIView()
+    private let recordTimeLabel = UILabel()
     private let emptyIcon = UIImageView()
     private let emptyLabel = UILabel()
     private let hintLabel = UILabel()
@@ -1479,6 +1503,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var videoSourceButton: UIButton!
     private var albumButton: UIButton!
     private var proceedButton: UIButton!
+    private var shutterButton: UIButton!
+    private var shutterInner: UIView!
+    private var modeButton: UIButton!
+    private var flipButton: UIButton!
     private var actionBar: UIVisualEffectView!
     private var changeButton: UIButton!
     private var retakeButton: UIButton!
@@ -1515,6 +1543,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         buildUI()
         applyBackgroundToStage()
         updateBars()
+        NotificationCenter.default.addObserver(self, selector: #selector(subjectAreaChanged), name: .AVCaptureDeviceSubjectAreaDidChange, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidLayoutSubviews() {
@@ -1526,10 +1559,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         super.viewDidAppear(animated)
         if !didAutoOpen {
             didAutoOpen = true
-            if autoOpen == "camera" {
-                openPhotoCamera()
-            } else if autoOpen == "album" {
+            if autoOpen == "album" {
                 openPicker()
+            } else {
+                // 'camera' / 'none'（投稿カードのカメラボタン）: そのまま内蔵カメラを起動
+                activateCamera(photoMode: true)
             }
         }
     }
@@ -1537,6 +1571,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         player?.pause()
+        stopCameraSession()
     }
 
     // MARK: UI構築
@@ -1568,6 +1603,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         backgroundView.isUserInteractionEnabled = false
         stageView.addSubview(backgroundView)
 
+        cameraView.isUserInteractionEnabled = false
+        cameraView.isHidden = true
+        cameraView.clipsToBounds = true
+        stageView.addSubview(cameraView)
+
         photoView.contentMode = .scaleToFill
         photoView.isUserInteractionEnabled = false
         photoView.isHidden = true
@@ -1581,10 +1621,13 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         emptyIcon.tintColor = UIColor.white.withAlphaComponent(0.18)
         emptyIcon.contentMode = .center
         stageView.addSubview(emptyIcon)
-        emptyLabel.text = "まずは写真・動画・背景を選んでください"
-        emptyLabel.textColor = UIColor.white.withAlphaComponent(0.45)
-        emptyLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        emptyLabel.text = "写真・動画・背景を選んでください"
+        emptyLabel.textColor = UIColor.white.withAlphaComponent(0.85)
+        emptyLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         emptyLabel.textAlignment = .center
+        emptyLabel.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        emptyLabel.layer.cornerRadius = 10
+        emptyLabel.clipsToBounds = true
         stageView.addSubview(emptyLabel)
 
         overlayView.image = overlayImage
@@ -1592,13 +1635,30 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         overlayView.isUserInteractionEnabled = false
         stageView.addSubview(overlayView)
 
+        focusIndicator.layer.borderColor = UIColor.systemYellow.cgColor
+        focusIndicator.layer.borderWidth = 1.5
+        focusIndicator.layer.cornerRadius = 6
+        focusIndicator.alpha = 0
+        focusIndicator.isUserInteractionEnabled = false
+        stageView.addSubview(focusIndicator)
+
+        recordTimeLabel.text = "00:00"
+        recordTimeLabel.textColor = .white
+        recordTimeLabel.font = .monospacedDigitSystemFont(ofSize: 14, weight: .bold)
+        recordTimeLabel.textAlignment = .center
+        recordTimeLabel.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        recordTimeLabel.layer.cornerRadius = 11
+        recordTimeLabel.clipsToBounds = true
+        recordTimeLabel.isHidden = true
+        stageView.addSubview(recordTimeLabel)
+
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.delegate = self
         stageView.addGestureRecognizer(pan)
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         pinch.delegate = self
         stageView.addGestureRecognizer(pinch)
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleStageTap))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleStageTap(_:)))
         tap.delegate = self
         stageView.addGestureRecognizer(tap)
 
@@ -1609,12 +1669,31 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
         buildBackgroundSelector()
 
-        photoSourceButton = makeSourceButton(symbol: "camera.fill", title: "写真を撮影", filled: true, action: #selector(openPhotoCameraTapped))
-        videoSourceButton = makeSourceButton(symbol: "video.fill", title: "動画を撮影", filled: false, action: #selector(openVideoCameraTapped))
+        photoSourceButton = makeSourceButton(symbol: "camera.fill", title: "写真を撮影", filled: true, action: #selector(photoSourceTapped))
+        videoSourceButton = makeSourceButton(symbol: "video.fill", title: "動画を撮影", filled: false, action: #selector(videoSourceTapped))
         albumButton = makeSourceButton(symbol: "photo.on.rectangle", title: "アルバムから選ぶ", filled: false, action: #selector(openPickerTapped))
         view.addSubview(photoSourceButton)
         view.addSubview(videoSourceButton)
         view.addSubview(albumButton)
+
+        // カメラ操作（モード切替／シャッター／前後切替）
+        modeButton = makeCamBarButton(title: "動画", action: #selector(modeTapped))
+        flipButton = makeCamBarButton(title: "切替", action: #selector(flipTapped))
+        view.addSubview(modeButton)
+        view.addSubview(flipButton)
+        shutterButton = UIButton(type: .custom)
+        shutterButton.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+        shutterButton.layer.cornerRadius = 36
+        shutterButton.layer.borderWidth = 4
+        shutterButton.layer.borderColor = UIColor.white.cgColor
+        let inner = UIView(frame: CGRect(x: 9, y: 9, width: 54, height: 54))
+        inner.backgroundColor = .white
+        inner.layer.cornerRadius = 27
+        inner.isUserInteractionEnabled = false
+        shutterInner = inner
+        shutterButton.addSubview(inner)
+        shutterButton.addTarget(self, action: #selector(shutterTapped), for: .touchUpInside)
+        view.addSubview(shutterButton)
 
         var proceedConfig = UIButton.Configuration.filled()
         proceedConfig.title = "この背景で進む"
@@ -1656,6 +1735,17 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         busyOverlay.addSubview(busySpinner)
         busyOverlay.addSubview(busyLabel)
         view.addSubview(busyOverlay)
+    }
+
+    private func makeCamBarButton(title: String, action: Selector) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setTitle(title, for: .normal)
+        b.setTitleColor(.white, for: .normal)
+        b.titleLabel?.font = .boldSystemFont(ofSize: 15)
+        b.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        b.layer.cornerRadius = 18
+        b.addTarget(self, action: action, for: .touchUpInside)
+        return b
     }
 
     private func buildBackgroundSelector() {
@@ -1756,8 +1846,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let safeTop = view.safeAreaInsets.top
         let safeBottom = view.safeAreaInsets.bottom
         let topH = safeTop + 60
-        // ステップ1は下部UIが多いので広く、ステップ2は狭く確保（ステージが広がる）
-        let bottomH = safeBottom + (step == 1 ? 268 : 108)
+        let bottomH = safeBottom + (step == 1 ? 280 : 108)
         let availH = bounds.height - topH - bottomH
         let stageW = max(200, min(bounds.width - 32, availH * 9 / 16, 430))
         let stageH = stageW * 16 / 9
@@ -1765,17 +1854,31 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let stageY = topH + max(0, (availH - stageH) / 2)
         stageView.frame = CGRect(x: stageX, y: stageY, width: stageW, height: stageH)
         backgroundView.frame = stageView.bounds
+        cameraView.frame = stageView.bounds
+        previewLayer?.frame = cameraView.bounds
         overlayView.frame = stageView.bounds
+        recordTimeLabel.frame = CGRect(x: stageW / 2 - 40, y: 12, width: 80, height: 24)
         emptyIcon.frame = CGRect(x: (stageW - 72) / 2, y: stageH / 2 - 62, width: 72, height: 56)
-        emptyLabel.frame = CGRect(x: 16, y: stageH / 2 + 2, width: stageW - 32, height: 20)
+        emptyLabel.frame = CGRect(x: (stageW - 250) / 2, y: stageH / 2 + 2, width: 250, height: 26)
         updateMediaFrame()
 
         titleLabel.frame = CGRect(x: 64, y: safeTop + 10, width: bounds.width - 128, height: 38)
         closeButton.frame = CGRect(x: 16, y: safeTop + 10, width: 38, height: 38)
         hintLabel.frame = CGRect(x: 16, y: stageY + stageH + 8, width: bounds.width - 32, height: 18)
 
-        // ステップ1の下部（背景の丸→進む→撮影ボタン2つ→アルバム）
-        let bgY = stageY + stageH + 32
+        // ステップ1の下部（下から: アルバム→操作ゾーン→進む→背景の丸）
+        let albumY = bounds.height - safeBottom - 62
+        albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
+        let zoneY = albumY - 10 - 76
+        let halfW = (stageW - 10) / 2
+        photoSourceButton.frame = CGRect(x: stageX, y: zoneY + 12, width: halfW, height: 52)
+        videoSourceButton.frame = CGRect(x: stageX + halfW + 10, y: zoneY + 12, width: halfW, height: 52)
+        shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
+        modeButton.frame = CGRect(x: stageX, y: zoneY + 18, width: 86, height: 40)
+        flipButton.frame = CGRect(x: stageX + stageW - 86, y: zoneY + 18, width: 86, height: 40)
+        let proceedY = zoneY - 8 - 46
+        proceedButton.frame = CGRect(x: stageX, y: proceedY, width: stageW, height: 46)
+        let bgY = (bgChosenByUser && !cameraActive ? proceedY : zoneY) - 8 - 44
         bgScroll.frame = CGRect(x: 0, y: bgY, width: bounds.width, height: 44)
         var bx: CGFloat = 16
         for b in bgButtons {
@@ -1786,12 +1889,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         if let gradient = wheelGradient, let wheel = bgButtons.first {
             gradient.frame = wheel.bounds
         }
-        proceedButton.frame = CGRect(x: stageX, y: bgY + 50, width: stageW, height: 46)
-        let albumY = bounds.height - safeBottom - 62
-        albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
-        let halfW = (stageW - 10) / 2
-        photoSourceButton.frame = CGRect(x: stageX, y: albumY - 62, width: halfW, height: 52)
-        videoSourceButton.frame = CGRect(x: stageX + halfW + 10, y: albumY - 62, width: halfW, height: 52)
 
         // ステップ2のツールバー
         let actionH: CGFloat = 74 + safeBottom
@@ -1813,6 +1910,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     private func goToStep(_ s: Int) {
+        if s == 2 {
+            cameraActive = false
+            stopCameraSession()
+        }
         step = s
         titleLabel.text = s == 1 ? "シェア画像を作成" : "編集・共有"
         updateBars()
@@ -1823,16 +1924,26 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     private func updateBars() {
         let inStep1 = step == 1
-        photoSourceButton.isHidden = !inStep1
-        videoSourceButton.isHidden = !inStep1
+        let camUI = inStep1 && cameraActive
+        photoSourceButton.isHidden = !inStep1 || cameraActive
+        videoSourceButton.isHidden = !inStep1 || cameraActive
+        shutterButton.isHidden = !camUI
+        modeButton.isHidden = !camUI
+        flipButton.isHidden = !camUI
+        recordTimeLabel.isHidden = !(camUI && !cameraModePhoto)
         albumButton.isHidden = !inStep1
         bgScroll.isHidden = !inStep1
-        proceedButton.isHidden = !(inStep1 && bgChosenByUser)
+        proceedButton.isHidden = !(inStep1 && bgChosenByUser && !cameraActive)
         actionBar.isHidden = inStep1
-        emptyIcon.isHidden = mediaKind != .none
-        emptyLabel.isHidden = mediaKind != .none
+        cameraView.isHidden = !cameraActive
+        emptyIcon.isHidden = mediaKind != .none || cameraActive
+        emptyLabel.isHidden = mediaKind != .none || cameraActive
         if inStep1 {
-            hintLabel.text = mediaKind == .background ? "背景が選ばれています" : "写真・動画・背景から選べます"
+            if cameraActive {
+                hintLabel.text = cameraModePhoto ? "タップでピント合わせ・シャッターで撮影" : "シャッターで録画開始/停止（最大60秒）"
+            } else {
+                hintLabel.text = mediaKind == .background ? "背景が選ばれています" : "写真・動画・背景から選べます"
+            }
         } else if mediaKind == .photo {
             hintLabel.text = "ドラッグ・ピンチで写真の位置を調整できます"
             retakeButton.isHidden = false
@@ -1850,8 +1961,15 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     // MARK: 背景
     @objc private func bgCircleTapped(_ sender: UIButton) {
+        if isRecording { return }
         UISelectionFeedbackGenerator().selectionChanged()
+        if cameraActive {
+            cameraActive = false
+            stopCameraSession()
+        }
         if sender.tag == wheelTag {
+            updateBars()
+            layoutAll()
             let picker = UIColorPickerViewController()
             picker.delegate = self
             picker.selectedColor = customColor
@@ -1871,6 +1989,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         applyBackgroundToStage()
         refreshBgSelection()
         updateBars()
+        layoutAll()
     }
 
     func colorPickerViewControllerDidSelectColor(_ viewController: UIColorPickerViewController) {
@@ -1886,6 +2005,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         applyBackgroundToStage()
         refreshBgSelection()
         updateBars()
+        layoutAll()
     }
 
     @objc private func proceedTapped() {
@@ -1974,6 +2094,408 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         return image
     }
 
+    // MARK: 内蔵カメラ
+    private var audioInputAdded = false
+
+    @objc private func photoSourceTapped() { activateCamera(photoMode: true) }
+    @objc private func videoSourceTapped() { activateCamera(photoMode: false) }
+
+    private func activateCamera(photoMode: Bool) {
+        guard step == 1, !isRecording else { return }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            beginCamera(photoMode: photoMode)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if granted {
+                        self.beginCamera(photoMode: photoMode)
+                    } else {
+                        self.showNotice("カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。")
+                    }
+                }
+            }
+        default:
+            showNotice("カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。")
+        }
+    }
+
+    private func beginCamera(photoMode: Bool) {
+        if mediaKind == .background {
+            resetBackgroundSelection()
+            mediaKind = .none
+        }
+        cameraActive = true
+        cameraModePhoto = photoMode
+        modeButton.setTitle(photoMode ? "動画" : "写真", for: .normal)
+        updateBars()
+        layoutAll()
+        if !photoMode { ensureAudioPermission() }
+        configureSessionIfNeeded { [weak self] ok in
+            guard let self = self else { return }
+            if !ok {
+                self.cameraActive = false
+                self.updateBars()
+                self.layoutAll()
+                self.showNotice("カメラを初期化できませんでした。")
+                return
+            }
+            guard self.cameraActive else { return }
+            self.sessionQueue.async {
+                if self.camSession?.isRunning == false {
+                    self.camSession?.startRunning()
+                }
+            }
+        }
+    }
+
+    private func stopCameraSession() {
+        recordTimer?.invalidate()
+        recordTimer = nil
+        if isRecording {
+            discardRecording = true
+            isRecording = false
+            movieOutput.stopRecording()
+            updateRecordUI()
+        }
+        sessionQueue.async { [weak self] in
+            if self?.camSession?.isRunning == true {
+                self?.camSession?.stopRunning()
+            }
+        }
+    }
+
+    private func cameraDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera],
+            mediaType: .video,
+            position: position
+        )
+        return discovery.devices.first
+    }
+
+    private func applyBestFormat(to device: AVCaptureDevice) {
+        let format = device.formats.filter { fmt in
+            let dims = CMVideoFormatDescriptionGetDimensions(fmt.formatDescription)
+            return dims.height >= 2160 && fmt.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
+        }.max { a, b in
+            CMVideoFormatDescriptionGetDimensions(a.formatDescription).width < CMVideoFormatDescriptionGetDimensions(b.formatDescription).width
+        }
+        guard let format = format else { return }
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = format
+            device.unlockForConfiguration()
+        } catch { }
+    }
+
+    private func configureSessionIfNeeded(completion: @escaping (Bool) -> Void) {
+        if sessionConfigured {
+            completion(true)
+            return
+        }
+        sessionQueue.async { [weak self] in
+            guard let self = self else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            let session = AVCaptureSession()
+            session.beginConfiguration()
+            session.sessionPreset = .inputPriority
+            guard let device = self.cameraDevice(for: .back),
+                  let input = try? AVCaptureDeviceInput(device: device),
+                  session.canAddInput(input) else {
+                session.commitConfiguration()
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            self.applyBestFormat(to: device)
+            session.addInput(input)
+            self.currentInput = input
+            self.currentDevice = device
+            self.currentPosition = .back
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+               let audioDevice = AVCaptureDevice.default(for: .audio),
+               let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
+               session.canAddInput(audioInput) {
+                session.addInput(audioInput)
+                self.audioInputAdded = true
+            }
+            self.videoDataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            self.videoDataOutput.alwaysDiscardsLateVideoFrames = true
+            self.videoDataOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
+            if session.canAddOutput(self.videoDataOutput) {
+                session.addOutput(self.videoDataOutput)
+            }
+            if session.canAddOutput(self.movieOutput) {
+                session.addOutput(self.movieOutput)
+            }
+            session.commitConfiguration()
+            self.camSession = session
+            self.sessionConfigured = true
+            DispatchQueue.main.async {
+                let layer = AVCaptureVideoPreviewLayer(session: session)
+                layer.videoGravity = .resizeAspectFill
+                self.cameraView.layer.addSublayer(layer)
+                self.previewLayer = layer
+                self.layoutAll()
+                self.applyOrientationAndMirroring()
+                completion(true)
+            }
+        }
+    }
+
+    private func ensureAudioPermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            addAudioInputIfNeeded()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                if granted { self?.addAudioInputIfNeeded() }
+            }
+        default:
+            break
+        }
+    }
+
+    private func addAudioInputIfNeeded() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, !self.audioInputAdded, let session = self.camSession,
+                  let audioDevice = AVCaptureDevice.default(for: .audio),
+                  let audioInput = try? AVCaptureDeviceInput(device: audioDevice) else { return }
+            session.beginConfiguration()
+            if session.canAddInput(audioInput) {
+                session.addInput(audioInput)
+                self.audioInputAdded = true
+            }
+            session.commitConfiguration()
+        }
+    }
+
+    private func setPortrait(_ conn: AVCaptureConnection) {
+        if #available(iOS 17.0, *) {
+            if conn.isVideoRotationAngleSupported(90) {
+                conn.videoRotationAngle = 90
+            }
+        } else if conn.isVideoOrientationSupported {
+            conn.videoOrientation = .portrait
+        }
+    }
+
+    private func applyOrientationAndMirroring() {
+        let mirrored = (currentPosition == .front)
+        if let conn = previewLayer?.connection {
+            setPortrait(conn)
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = mirrored
+            }
+        }
+        if sessionConfigured, let conn = movieOutput.connection(with: .video) {
+            setPortrait(conn)
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = mirrored
+            }
+        }
+    }
+
+    @objc private func modeTapped() {
+        if isRecording { return }
+        cameraModePhoto.toggle()
+        modeButton.setTitle(cameraModePhoto ? "動画" : "写真", for: .normal)
+        if !cameraModePhoto { ensureAudioPermission() }
+        updateBars()
+    }
+
+    @objc private func flipTapped() {
+        if isRecording || !cameraActive { return }
+        let target: AVCaptureDevice.Position = (currentPosition == .back) ? .front : .back
+        sessionQueue.async { [weak self] in
+            guard let self = self, let session = self.camSession else { return }
+            guard let device = self.cameraDevice(for: target),
+                  let newInput = try? AVCaptureDeviceInput(device: device) else { return }
+            session.beginConfiguration()
+            if let current = self.currentInput {
+                session.removeInput(current)
+            }
+            if session.canAddInput(newInput) {
+                session.addInput(newInput)
+                self.currentInput = newInput
+                self.currentDevice = device
+                self.currentPosition = target
+                self.applyBestFormat(to: device)
+            } else if let current = self.currentInput {
+                session.addInput(current)
+            }
+            session.commitConfiguration()
+            DispatchQueue.main.async {
+                self.applyOrientationAndMirroring()
+                self.resetFocusToContinuous()
+            }
+        }
+    }
+
+    private func focusAt(_ point: CGPoint) {
+        guard let layer = previewLayer, let device = currentDevice else { return }
+        let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: point)
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = devicePoint
+                if device.isFocusModeSupported(.autoFocus) {
+                    device.focusMode = .autoFocus
+                }
+            }
+            if device.isExposurePointOfInterestSupported {
+                device.exposurePointOfInterest = devicePoint
+                if device.isExposureModeSupported(.autoExpose) {
+                    device.exposureMode = .autoExpose
+                }
+            }
+            device.isSubjectAreaChangeMonitoringEnabled = true
+            device.unlockForConfiguration()
+        } catch { }
+        showFocusIndicator(at: point)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func resetFocusToContinuous() {
+        guard let device = currentDevice else { return }
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+            }
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            if device.isExposurePointOfInterestSupported {
+                device.exposurePointOfInterest = CGPoint(x: 0.5, y: 0.5)
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            device.unlockForConfiguration()
+        } catch { }
+    }
+
+    @objc private func subjectAreaChanged() {
+        resetFocusToContinuous()
+    }
+
+    private func showFocusIndicator(at point: CGPoint) {
+        focusIndicator.frame = CGRect(x: point.x - 34, y: point.y - 34, width: 68, height: 68)
+        focusIndicator.alpha = 1
+        focusIndicator.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
+        UIView.animate(withDuration: 0.18, animations: {
+            self.focusIndicator.transform = .identity
+        }) { _ in
+            UIView.animate(withDuration: 0.3, delay: 0.6, options: [], animations: {
+                self.focusIndicator.alpha = 0
+            })
+        }
+    }
+
+    @objc private func shutterTapped() {
+        guard cameraActive, step == 1 else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if cameraModePhoto {
+            // 次に届く映像フレームを撮影する（シャッター音は鳴らない）
+            sessionQueue.async { [weak self] in
+                self?.captureRequested = true
+            }
+        } else {
+            toggleRecording()
+        }
+    }
+
+    private func toggleRecording() {
+        if isRecording {
+            movieOutput.stopRecording()
+            return
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("withfit_video_\(Int(Date().timeIntervalSince1970)).mov")
+        movieOutput.startRecording(to: url, recordingDelegate: self)
+        isRecording = true
+        recordSeconds = 0
+        updateRecordUI()
+        recordTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.recordSeconds += 1
+            self.updateRecordUI()
+            if self.recordSeconds >= 60 {
+                self.movieOutput.stopRecording()
+            }
+        }
+    }
+
+    private func updateRecordUI() {
+        recordTimeLabel.text = String(format: "%02d:%02d", recordSeconds / 60, recordSeconds % 60)
+        recordTimeLabel.textColor = isRecording ? .systemRed : .white
+        shutterInner.backgroundColor = isRecording ? .systemRed : .white
+        shutterInner.layer.cornerRadius = isRecording ? 10 : 27
+        let inset: CGFloat = isRecording ? 20 : 9
+        shutterInner.frame = CGRect(x: inset, y: inset, width: 72 - inset * 2, height: 72 - inset * 2)
+        flipButton.isEnabled = !isRecording
+        flipButton.alpha = isRecording ? 0.35 : 1
+        modeButton.isEnabled = !isRecording
+        modeButton.alpha = isRecording ? 0.35 : 1
+    }
+
+    func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.recordTimer?.invalidate()
+            self.recordTimer = nil
+            self.isRecording = false
+            self.updateRecordUI()
+            if self.discardRecording {
+                self.discardRecording = false
+                try? FileManager.default.removeItem(at: outputFileURL)
+                return
+            }
+            let size = (try? FileManager.default.attributesOfItem(atPath: outputFileURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+            if error == nil || size > 0 {
+                self.setVideo(url: outputFileURL)
+            } else {
+                self.showNotice("録画に失敗しました。")
+            }
+        }
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard captureRequested else { return }
+        captureRequested = false
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        ciImage = ciImage.oriented(currentPosition == .front ? .leftMirrored : .right)
+        let origin = ciImage.extent.origin
+        if origin.x != 0 || origin.y != 0 {
+            ciImage = ciImage.transformed(by: CGAffineTransform(translationX: -origin.x, y: -origin.y))
+        }
+        let w = ciImage.extent.width
+        let h = ciImage.extent.height
+        guard w > 0, h > 0 else { return }
+        // 1080x1920（9:16）に cover で切り抜く
+        let scale = max(1080 / w, 1920 / h)
+        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let cropRect = CGRect(x: (w * scale - 1080) / 2, y: (h * scale - 1920) / 2, width: 1080, height: 1920)
+        guard let cgImage = ciContext.createCGImage(scaled, from: cropRect) else { return }
+        let raw = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+        // キャプチャ由来の画像を通常のビットマップへ複写して切り離す
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: raw.size, format: format).image { _ in
+            raw.draw(in: CGRect(origin: .zero, size: raw.size))
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.setPhoto(image)
+        }
+    }
+
     // MARK: メディアの配置（Canvas座標 1080x1920 で管理し、常に画面を覆う範囲に制限）
     private func mediaSize() -> CGSize? {
         if mediaKind == .photo, let photo = photo { return photo.size }
@@ -2057,8 +2579,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         applyView(s: ns, x: viewX, y: viewY)
     }
 
-    @objc private func handleStageTap() {
-        if mediaKind == .video, let player = player {
+    @objc private func handleStageTap(_ gesture: UITapGestureRecognizer) {
+        if step == 1 && cameraActive {
+            focusAt(gesture.location(in: stageView))
+        } else if mediaKind == .video, let player = player {
             if player.rate > 0 {
                 player.pause()
             } else {
@@ -2139,52 +2663,33 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         goToStep(2)
     }
 
-    @objc private func openPhotoCameraTapped() { openPhotoCamera() }
-    @objc private func openVideoCameraTapped() { openVideoCamera() }
-    @objc private func openPickerTapped() { openPicker() }
+    @objc private func openPickerTapped() {
+        if isRecording { return }
+        if cameraActive {
+            cameraActive = false
+            stopCameraSession()
+            updateBars()
+            layoutAll()
+        }
+        openPicker()
+    }
 
     @objc private func changeTapped() {
-        // ステップ1に戻って素材を選び直す
         clearMedia()
         mediaKind = .none
         resetBackgroundSelection()
+        cameraActive = false
+        stopCameraSession()
         goToStep(1)
     }
 
     @objc private func retakeTapped() {
-        if mediaKind == .video {
-            openVideoCamera()
-        } else {
-            openPhotoCamera()
-        }
-    }
-
-    private func openPhotoCamera() {
-        let vc = ShareCameraViewController()
-        vc.mode = .photo
-        vc.overlayImage = overlayImage
-        vc.modalPresentationStyle = .fullScreen
-        vc.onCapturedImage = { [weak self] image in
-            self?.setPhoto(image)
-        }
-        vc.onError = { [weak self] message in
-            self?.showNotice(message)
-        }
-        present(vc, animated: true)
-    }
-
-    private func openVideoCamera() {
-        let vc = ShareCameraViewController()
-        vc.mode = .video
-        vc.overlayImage = overlayImage
-        vc.modalPresentationStyle = .fullScreen
-        vc.onRecordedVideo = { [weak self] url in
-            self?.setVideo(url: url)
-        }
-        vc.onError = { [weak self] message in
-            self?.showNotice(message)
-        }
-        present(vc, animated: true)
+        let wasVideo = mediaKind == .video
+        clearMedia()
+        mediaKind = .none
+        resetBackgroundSelection()
+        goToStep(1)
+        activateCamera(photoMode: !wasVideo)
     }
 
     private func openPicker() {
@@ -2349,21 +2854,22 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             return
         }
         guard let image = renderFinal() else { return }
-        if let data = image.jpegData(compressionQuality: 0.92) {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("withfit_share_\(Int(Date().timeIntervalSince1970)).jpg")
-            if (try? data.write(to: url)) != nil {
-                presentShareSheet(items: [url])
-                return
-            }
-        }
+        // 写真・背景は v46 で実績のある UIImage のまま渡す
         presentShareSheet(items: [image])
     }
 
+    // v46 で実績のある表示手順: メインキューへ回し、最前面の画面から、
+    // ポップオーバーの起点をその画面の中央にして表示する
     private func presentShareSheet(items: [Any]) {
         let avc = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        avc.popoverPresentationController?.sourceView = stageView
-        avc.popoverPresentationController?.sourceRect = stageView.bounds
-        present(avc, animated: true)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            var topVC: UIViewController = self
+            while let presented = topVC.presentedViewController { topVC = presented }
+            avc.popoverPresentationController?.sourceView = topVC.view
+            avc.popoverPresentationController?.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+            topVC.present(avc, animated: true)
+        }
     }
 
     @objc private func saveTapped() {
@@ -2457,6 +2963,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     @objc private func closeTapped() {
         player?.pause()
+        stopCameraSession()
         dismiss(animated: true)
     }
 }
