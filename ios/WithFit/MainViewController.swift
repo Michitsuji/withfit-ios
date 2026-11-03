@@ -347,27 +347,16 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             NativeAudioAndTimerManager.shared.triggerHaptic(style: style)
 
         case "SHARE_IMAGE":
-            // 大きな画像データのデコードとファイル書き込みはバックグラウンドで行い、
-            // 共有シートには一時ファイルの URL を渡す（メインスレッドを止めない）
-            if let b64 = payload["image"] as? String {
-                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                    guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else { return }
-                    let url = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("withfit-share-\(UUID().uuidString).jpg")
-                    guard (try? data.write(to: url, options: .atomic)) != nil else { return }
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        let avc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-                        avc.popoverPresentationController?.sourceView = self.view
-                        avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
-                        if let presented = self.presentedViewController {
-                            presented.dismiss(animated: false) {
-                                self.present(avc, animated: true)
-                            }
-                        } else {
-                            self.present(avc, animated: true)
-                        }
-                    }
+            // v46で実績のある方式（UIImageをメインスレッドで渡す）に戻す
+            if let b64 = payload["image"] as? String,
+               let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+               let image = UIImage(data: data) {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+                    avc.popoverPresentationController?.sourceView = self.view
+                    avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+                    self.present(avc, animated: true)
                 }
             }
 

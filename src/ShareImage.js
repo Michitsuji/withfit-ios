@@ -400,7 +400,14 @@ export function ShareImageModal({ post, autoPick, onClose }) {
       streamRef.current = null;
     }
   };
-  const stopLive = () => { stopStream(); setLive(false); };
+  const stopLive = () => {
+    stopStream();
+    if (videoRef.current) {
+      try { videoRef.current.pause(); } catch (e) {}
+      videoRef.current.srcObject = null;
+    }
+    setLive(false);
+  };
 
   useEffect(() => () => stopStream(), []);
 
@@ -414,7 +421,8 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: fm, width: { ideal: 2160 }, height: { ideal: 3840 } },
+        // 出力は1080x1920なので、それ以上の解像度はメモリを圧迫するだけ
+        video: { facingMode: fm, width: { ideal: 1080 }, height: { ideal: 1920 } },
       });
       streamRef.current = stream;
       setFacing(fm);
@@ -573,7 +581,28 @@ export function ShareImageModal({ post, autoPick, onClose }) {
   };
 
   const handleClose = () => { stopLive(); onClose(); };
-  const stageWidth = 'min(430px, 94vw, calc((100dvh - 265px) * 0.5625))';
+
+  // ステージ（プレビュー領域）は実測で決める。CSSのdvh計算に頼ると
+  // 環境によってはみ出すことがあるため、収まる最大サイズを測って使う。
+  const stageBoxRef = useRef(null);
+  const [stage, setStage] = useState({ w: 300, h: 533 });
+  useEffect(() => {
+    const el = stageBoxRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      const w = Math.max(200, Math.min(430, r.width - 32, (r.height - 8) * 9 / 16));
+      setStage({ w, h: w * 16 / 9 });
+    };
+    update();
+    let ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(update);
+      ro.observe(el);
+    }
+    window.addEventListener('resize', update);
+    return () => { if (ro) ro.disconnect(); window.removeEventListener('resize', update); };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[70] bg-slate-950 flex flex-col" style={{ height: '100dvh' }} onClick={handleClose}>
@@ -582,10 +611,10 @@ export function ShareImageModal({ post, autoPick, onClose }) {
         <button onClick={handleClose} className="text-white/80 p-1.5 rounded-lg hover:bg-white/10"><X size={22} /></button>
       </div>
 
-      <div className="flex-1 min-h-0 flex items-center justify-center px-4" onClick={(e) => e.stopPropagation()}>
-        <div className="relative" style={{ width: stageWidth }}>
+      <div ref={stageBoxRef} className="flex-1 min-h-0 w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+        <div className="relative shrink-0" style={{ width: stage.w, height: stage.h }}>
           {live ? (
-            <div className="relative w-full rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: '9 / 16' }}>
+            <div className="absolute inset-0 rounded-2xl overflow-hidden bg-black">
               <video
                 ref={videoRef}
                 playsInline
@@ -601,8 +630,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
               ref={canvasRef}
               width={CW}
               height={CH}
-              className="w-full rounded-2xl touch-none select-none bg-black"
-              style={{ aspectRatio: '9 / 16' }}
+              className="w-full h-full block rounded-2xl touch-none select-none bg-black"
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
