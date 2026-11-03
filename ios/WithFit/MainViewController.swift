@@ -3,6 +3,8 @@ import WebKit
 import UserNotifications
 import AuthenticationServices
 import CryptoKit
+import AVFoundation
+import Photos
 
 final class MainViewController: UITabBarController, UITabBarControllerDelegate, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
 
@@ -347,16 +349,84 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             NativeAudioAndTimerManager.shared.triggerHaptic(style: style)
 
         case "SHARE_IMAGE":
-            // v46で実績のある方式（UIImageをメインスレッドで渡す）に戻す
+            // v46で実績のある方式（UIImageをメインスレッドで渡す）
             if let b64 = payload["image"] as? String,
                let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
                let image = UIImage(data: data) {
                 DispatchQueue.main.async { [weak self] in
+                    self?.presentShareSheet(image: image)
+                }
+            }
+
+        case "OPEN_SHARE_CAMERA":
+            // ネイティブのライブカメラ（コラージュ重ね表示付き）を開く
+            var overlay: UIImage? = nil
+            if let b64 = payload["overlay"] as? String,
+               let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) {
+                overlay = UIImage(data: data)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let vc = ShareCameraViewController()
+                vc.overlayImage = overlay
+                vc.modalPresentationStyle = .fullScreen
+                vc.onCaptured = { [weak self] jpegBase64 in
+                    self?.sendToWeb(payload: ["type": "SHARE_CAMERA_RESULT", "image": jpegBase64])
+                }
+                vc.onCancelled = { [weak self] in
+                    self?.sendToWeb(payload: ["type": "SHARE_CAMERA_RESULT", "cancelled": true])
+                }
+                vc.onError = { [weak self] message in
+                    self?.sendToWeb(payload: ["type": "SHARE_CAMERA_RESULT", "error": message])
+                }
+                var topVC: UIViewController = self
+                while let presented = topVC.presentedViewController { topVC = presented }
+                topVC.present(vc, animated: true)
+            }
+
+        case "SAVE_IMAGE":
+            // 完成画像をフォトライブラリへ直接保存する
+            if let b64 = payload["image"] as? String,
+               let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+               let image = UIImage(data: data) {
+                PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+                    guard status == .authorized || status == .limited else {
+                        self?.sendToWeb(payload: ["type": "SAVE_IMAGE_RESULT", "error": "denied"])
+                        return
+                    }
+                    PHPhotoLibrary.shared().performChanges({
+                        PHAssetChangeRequest.creationRequestForAsset(from: image)
+                    }) { success, _ in
+                        if success {
+                            self?.sendToWeb(payload: ["type": "SAVE_IMAGE_RESULT", "ok": true])
+                        } else {
+                            self?.sendToWeb(payload: ["type": "SAVE_IMAGE_RESULT", "error": "failed"])
+                        }
+                    }
+                }
+            } else {
+                sendToWeb(payload: ["type": "SAVE_IMAGE_RESULT", "error": "invalid"])
+            }
+
+        case "SHARE_TO_INSTAGRAM_STORIES":
+            // 画像をペーストボード経由で Instagram ストーリーズ作成画面へ渡す
+            if let b64 = payload["image"] as? String,
+               let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) {
+                DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
-                    let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
-                    avc.popoverPresentationController?.sourceView = self.view
-                    avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
-                    self.present(avc, animated: true)
+                    let pasteboardItems: [String: Any] = ["com.instagram.sharedSticker.backgroundImage": data]
+                    UIPasteboard.general.setItems([pasteboardItems], options: [.expirationDate: Date().addingTimeInterval(60 * 5)])
+                    let appId = Bundle.main.object(forInfoDictionaryKey: "WithFitFacebookAppID") as? String ?? ""
+                    var components = URLComponents(string: "instagram-stories://share")
+                    if !appId.isEmpty {
+                        components?.queryItems = [URLQueryItem(name: "source_application", value: appId)]
+                    }
+                    if let url = components?.url, UIApplication.shared.canOpenURL(url) {
+                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                    } else if let image = UIImage(data: data) {
+                        // Instagram が無い場合は通常の共有シートにフォールバック
+                        self.presentShareSheet(image: image)
+                    }
                 }
             }
 
@@ -508,6 +578,16 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     }
 
     // MARK: - Swift -> React Messaging
+    // 共有シートを最前面の画面から表示する
+    private func presentShareSheet(image: UIImage) {
+        let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        avc.popoverPresentationController?.sourceView = self.view
+        avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+        var topVC: UIViewController = self
+        while let presented = topVC.presentedViewController { topVC = presented }
+        topVC.present(avc, animated: true)
+    }
+
     func sendToWeb(payload: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let jsonStr = String(data: data, encoding: .utf8) else { return }
@@ -836,5 +916,283 @@ extension MainViewController: ASAuthorizationControllerDelegate, ASAuthorization
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
         sendToWeb(payload: ["type": "APPLE_SIGN_IN_RESULT", "error": "cancelled_or_failed"])
+    }
+}
+
+// MARK: - Share Camera (ネイティブのライブカメラ: コラージュを重ねたまま撮影する)
+final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDelegate {
+    var overlayImage: UIImage?
+    var onCaptured: ((String) -> Void)?
+    var onCancelled: (() -> Void)?
+    var onError: ((String) -> Void)?
+
+    private let session = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "withfit.share.camera.session")
+    private let photoOutput = AVCapturePhotoOutput()
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var currentInput: AVCaptureDeviceInput?
+    private var currentPosition: AVCaptureDevice.Position = .back
+    private var finished = false
+
+    private let stageView = UIView()
+    private let overlayView = UIImageView()
+    private var shutterButton: UIButton!
+    private var flipButton: UIButton!
+    private var backButton: UIButton!
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        buildUI()
+        checkPermissionAndStart()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutStage()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if isBeingDismissed && !finished {
+            finished = true
+            stopSession()
+            onCancelled?()
+        }
+    }
+
+    private func buildUI() {
+        stageView.backgroundColor = .black
+        stageView.clipsToBounds = true
+        stageView.layer.cornerRadius = 16
+        view.addSubview(stageView)
+        overlayView.image = overlayImage
+        overlayView.contentMode = .scaleToFill
+        overlayView.isUserInteractionEnabled = false
+        stageView.addSubview(overlayView)
+
+        backButton = makeBarButton(title: "‹ 戻る", action: #selector(cancelTapped))
+        flipButton = makeBarButton(title: "切替", action: #selector(flipTapped))
+        view.addSubview(backButton)
+        view.addSubview(flipButton)
+
+        shutterButton = UIButton(type: .custom)
+        shutterButton.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+        shutterButton.layer.cornerRadius = 36
+        shutterButton.layer.borderWidth = 4
+        shutterButton.layer.borderColor = UIColor.white.cgColor
+        let inner = UIView(frame: CGRect(x: 9, y: 9, width: 54, height: 54))
+        inner.backgroundColor = .white
+        inner.layer.cornerRadius = 27
+        inner.isUserInteractionEnabled = false
+        shutterButton.addSubview(inner)
+        shutterButton.addTarget(self, action: #selector(shutterTapped), for: .touchUpInside)
+        view.addSubview(shutterButton)
+    }
+
+    private func makeBarButton(title: String, action: Selector) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setTitle(title, for: .normal)
+        b.setTitleColor(.white, for: .normal)
+        b.titleLabel?.font = .boldSystemFont(ofSize: 15)
+        b.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        b.layer.cornerRadius = 18
+        b.contentEdgeInsets = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        b.sizeToFit()
+        b.addTarget(self, action: action, for: .touchUpInside)
+        return b
+    }
+
+    private func layoutStage() {
+        let bounds = view.bounds
+        let safeBottom = view.safeAreaInsets.bottom
+        let controlsH: CGFloat = 120 + safeBottom
+        let availH = bounds.height - controlsH - 64
+        let stageW = max(200, min(bounds.width - 24, availH * 9 / 16, 430))
+        let stageH = stageW * 16 / 9
+        let stageY = max(48, (bounds.height - controlsH - stageH) / 2 + 24)
+        stageView.frame = CGRect(x: (bounds.width - stageW) / 2, y: stageY, width: stageW, height: stageH)
+        previewLayer?.frame = stageView.bounds
+        overlayView.frame = stageView.bounds
+        let barY = bounds.height - safeBottom - 92
+        backButton.frame = CGRect(x: 20, y: barY + 14, width: 86, height: 40)
+        flipButton.frame = CGRect(x: bounds.width - 106, y: barY + 14, width: 86, height: 40)
+        shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: barY, width: 72, height: 72)
+    }
+
+    private func checkPermissionAndStart() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            configureAndStart()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if granted {
+                        self.configureAndStart()
+                    } else {
+                        self.finishWithError("カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。")
+                    }
+                }
+            }
+        default:
+            finishWithError("カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。")
+        }
+    }
+
+    private func camera(for position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera],
+            mediaType: .video,
+            position: position
+        )
+        return discovery.devices.first
+    }
+
+    private func configureAndStart() {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.session.beginConfiguration()
+            self.session.sessionPreset = .photo
+            guard let device = self.camera(for: .back),
+                  let input = try? AVCaptureDeviceInput(device: device),
+                  self.session.canAddInput(input) else {
+                self.session.commitConfiguration()
+                DispatchQueue.main.async { self.finishWithError("カメラを初期化できませんでした。") }
+                return
+            }
+            self.session.addInput(input)
+            self.currentInput = input
+            self.currentPosition = .back
+            if self.session.canAddOutput(self.photoOutput) {
+                self.session.addOutput(self.photoOutput)
+            }
+            self.session.commitConfiguration()
+            self.applyOrientationAndMirroring()
+            DispatchQueue.main.async {
+                let layer = AVCaptureVideoPreviewLayer(session: self.session)
+                layer.videoGravity = .resizeAspectFill
+                self.stageView.layer.insertSublayer(layer, at: 0)
+                self.previewLayer = layer
+                self.layoutStage()
+                self.applyOrientationAndMirroring()
+            }
+            self.session.startRunning()
+        }
+    }
+
+    private func setPortrait(_ conn: AVCaptureConnection) {
+        if #available(iOS 17.0, *) {
+            if conn.isVideoRotationAngleSupported(90) {
+                conn.videoRotationAngle = 90
+            }
+        } else if conn.isVideoOrientationSupported {
+            conn.videoOrientation = .portrait
+        }
+    }
+
+    private func applyOrientationAndMirroring() {
+        let mirrored = (currentPosition == .front)
+        if let conn = previewLayer?.connection {
+            setPortrait(conn)
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = mirrored
+            }
+        }
+        if let conn = photoOutput.connection(with: .video) {
+            setPortrait(conn)
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = mirrored
+            }
+        }
+    }
+
+    @objc private func flipTapped() {
+        let target: AVCaptureDevice.Position = (currentPosition == .back) ? .front : .back
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard let device = self.camera(for: target),
+                  let newInput = try? AVCaptureDeviceInput(device: device) else { return }
+            self.session.beginConfiguration()
+            if let current = self.currentInput {
+                self.session.removeInput(current)
+            }
+            if self.session.canAddInput(newInput) {
+                self.session.addInput(newInput)
+                self.currentInput = newInput
+                self.currentPosition = target
+            } else if let current = self.currentInput {
+                self.session.addInput(current)
+            }
+            self.session.commitConfiguration()
+            DispatchQueue.main.async { self.applyOrientationAndMirroring() }
+        }
+    }
+
+    @objc private func shutterTapped() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let settings = AVCapturePhotoSettings()
+        sessionQueue.async { [weak self] in
+            self?.photoOutput.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        if error != nil {
+            finishWithError("撮影に失敗しました。")
+            return
+        }
+        guard let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
+            finishWithError("撮影データを取得できませんでした。")
+            return
+        }
+        // 1080x1920（9:16）に cover で切り抜いて JPEG 化する
+        let target = CGSize(width: 1080, height: 1920)
+        let renderer = UIGraphicsImageRenderer(size: target)
+        let composed = renderer.image { _ in
+            let iw = image.size.width
+            let ih = image.size.height
+            let scale = max(target.width / iw, target.height / ih)
+            let dw = iw * scale
+            let dh = ih * scale
+            image.draw(in: CGRect(x: (target.width - dw) / 2, y: (target.height - dh) / 2, width: dw, height: dh))
+        }
+        guard let jpeg = composed.jpegData(compressionQuality: 0.92) else {
+            finishWithError("画像の変換に失敗しました。")
+            return
+        }
+        let b64 = jpeg.base64EncodedString()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.finished else { return }
+            self.finished = true
+            self.stopSession()
+            self.dismiss(animated: true) { self.onCaptured?(b64) }
+        }
+    }
+
+    @objc private func cancelTapped() {
+        guard !finished else { return }
+        finished = true
+        stopSession()
+        dismiss(animated: true) { self.onCancelled?() }
+    }
+
+    private func finishWithError(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.finished else { return }
+            self.finished = true
+            self.stopSession()
+            self.dismiss(animated: true) { self.onError?(message) }
+        }
+    }
+
+    private func stopSession() {
+        sessionQueue.async { [weak self] in
+            if self?.session.isRunning == true {
+                self?.session.stopRunning()
+            }
+        }
     }
 }

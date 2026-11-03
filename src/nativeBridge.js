@@ -249,3 +249,67 @@ export function getApiUrl(path) {
   }
   return cleanPath;
 }
+
+// ==========================================
+// シェア画像用ネイティブ連携（カメラ撮影・写真保存・Instagramストーリーズ）
+// ==========================================
+let shareCameraResolver = null;
+let saveImageResolver = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', (event) => {
+    const data = event && event.data;
+    if (!data) return;
+    if (data.type === 'SHARE_CAMERA_RESULT' && shareCameraResolver) {
+      const resolve = shareCameraResolver;
+      shareCameraResolver = null;
+      resolve(data);
+    }
+    if (data.type === 'SAVE_IMAGE_RESULT' && saveImageResolver) {
+      const resolve = saveImageResolver;
+      saveImageResolver = null;
+      resolve(data);
+    }
+  });
+}
+
+// ネイティブのライブカメラを開く。overlayBase64 は透明PNG（コラージュ部分）。
+// 戻り値: { image: base64(JPEG) } | { cancelled: true } | { error: string }
+export function requestShareCamera(overlayBase64) {
+  return new Promise((resolve) => {
+    if (!isNativeIosApp()) {
+      resolve({ error: 'not_native' });
+      return;
+    }
+    shareCameraResolver = resolve;
+    postNativeMessage({ type: 'OPEN_SHARE_CAMERA', overlay: overlayBase64 || '' });
+    setTimeout(() => {
+      if (shareCameraResolver === resolve) {
+        shareCameraResolver = null;
+        resolve({ error: 'timeout' });
+      }
+    }, 300000);
+  });
+}
+
+// 完成画像をフォトライブラリへ直接保存する。戻り値: { ok: true } | { error: string }
+export function saveImageNative(base64) {
+  return new Promise((resolve) => {
+    if (!isNativeIosApp()) {
+      resolve({ error: 'not_native' });
+      return;
+    }
+    saveImageResolver = resolve;
+    postNativeMessage({ type: 'SAVE_IMAGE', image: base64 });
+    setTimeout(() => {
+      if (saveImageResolver === resolve) {
+        saveImageResolver = null;
+        resolve({ error: 'timeout' });
+      }
+    }, 60000);
+  });
+}
+
+// Instagram ストーリーズ作成画面へ画像を渡す（結果は戻らない）
+export function shareToInstagramStoriesNative(base64) {
+  return postNativeMessage({ type: 'SHARE_TO_INSTAGRAM_STORIES', image: base64 });
+}

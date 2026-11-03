@@ -34,9 +34,17 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>プロフィールアイコン用の写真を撮影・設定するためにカメラを使用します。</string>
+	<string>プロフィールアイコンやシェア画像用の写真を撮影するためにカメラを使用します。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>プロフィールアイコン用の画像を選択するために写真ライブラリを使用します。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>作成したシェア画像を写真ライブラリに保存するために使用します。</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram-stories</string>
+	</array>
+	<key>WithFitFacebookAppID</key>
+	<string></string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
