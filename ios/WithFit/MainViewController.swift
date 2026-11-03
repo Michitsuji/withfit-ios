@@ -4,6 +4,7 @@ import UserNotifications
 import AuthenticationServices
 import CryptoKit
 import AVFoundation
+import CoreImage
 import Photos
 import PhotosUI
 
@@ -941,7 +942,7 @@ extension MainViewController: ASAuthorizationControllerDelegate, ASAuthorization
 }
 
 // MARK: - Share Camera (ネイティブのライブカメラ: コラージュを重ねたまま撮影する)
-final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDelegate {
+final class ShareCameraViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDelegate {
     var overlayImage: UIImage?
     var onCapturedImage: ((UIImage) -> Void)?
     var onCancelled: (() -> Void)?
@@ -949,14 +950,19 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
 
     private let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "withfit.share.camera.session")
-    private let photoOutput = AVCapturePhotoOutput()
+    // シャッター音を鳴らさないため、静止画撮影ではなく映像フレームから切り出す方式を使う
+    private let videoOutput = AVCaptureVideoDataOutput()
+    private let ciContext = CIContext()
+    private var captureRequested = false
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var currentInput: AVCaptureDeviceInput?
+    private var currentDevice: AVCaptureDevice?
     private var currentPosition: AVCaptureDevice.Position = .back
     private var finished = false
 
     private let stageView = UIView()
     private let overlayView = UIImageView()
+    private let focusIndicator = UIView()
     private var shutterButton: UIButton!
     private var flipButton: UIButton!
     private var backButton: UIButton!
@@ -965,7 +971,12 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
         super.viewDidLoad()
         view.backgroundColor = .black
         buildUI()
+        NotificationCenter.default.addObserver(self, selector: #selector(subjectAreaChanged), name: .AVCaptureDeviceSubjectAreaDidChange, object: nil)
         checkPermissionAndStart()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidLayoutSubviews() {
@@ -991,6 +1002,16 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
         overlayView.contentMode = .scaleToFill
         overlayView.isUserInteractionEnabled = false
         stageView.addSubview(overlayView)
+
+        // タップでピント・露出を合わせるためのフォーカス枠
+        focusIndicator.layer.borderColor = UIColor.systemYellow.cgColor
+        focusIndicator.layer.borderWidth = 1.5
+        focusIndicator.layer.cornerRadius = 6
+        focusIndicator.alpha = 0
+        focusIndicator.isUserInteractionEnabled = false
+        stageView.addSubview(focusIndicator)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(focusTapped(_:)))
+        stageView.addGestureRecognizer(tap)
 
         backButton = makeBarButton(title: "‹ 戻る", action: #selector(cancelTapped))
         flipButton = makeBarButton(title: "切替", action: #selector(flipTapped))
@@ -1070,11 +1091,27 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
         return discovery.devices.first
     }
 
+    // 映像フレーム用に、できるだけ高解像度（4K優先）のフォーマットを選ぶ
+    private func applyBestFormat(to device: AVCaptureDevice) {
+        let format = device.formats.filter { fmt in
+            let dims = CMVideoFormatDescriptionGetDimensions(fmt.formatDescription)
+            return dims.height >= 2160 && fmt.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 30 }
+        }.max { a, b in
+            CMVideoFormatDescriptionGetDimensions(a.formatDescription).width < CMVideoFormatDescriptionGetDimensions(b.formatDescription).width
+        }
+        guard let format = format else { return }
+        do {
+            try device.lockForConfiguration()
+            device.activeFormat = format
+            device.unlockForConfiguration()
+        } catch { }
+    }
+
     private func configureAndStart() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             self.session.beginConfiguration()
-            self.session.sessionPreset = .photo
+            self.session.sessionPreset = .inputPriority
             guard let device = self.camera(for: .back),
                   let input = try? AVCaptureDeviceInput(device: device),
                   self.session.canAddInput(input) else {
@@ -1082,14 +1119,18 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
                 DispatchQueue.main.async { self.finishWithError("カメラを初期化できませんでした。") }
                 return
             }
+            self.applyBestFormat(to: device)
             self.session.addInput(input)
             self.currentInput = input
+            self.currentDevice = device
             self.currentPosition = .back
-            if self.session.canAddOutput(self.photoOutput) {
-                self.session.addOutput(self.photoOutput)
+            self.videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            self.videoOutput.alwaysDiscardsLateVideoFrames = true
+            self.videoOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
+            if self.session.canAddOutput(self.videoOutput) {
+                self.session.addOutput(self.videoOutput)
             }
             self.session.commitConfiguration()
-            self.applyOrientationAndMirroring()
             DispatchQueue.main.async {
                 let layer = AVCaptureVideoPreviewLayer(session: self.session)
                 layer.videoGravity = .resizeAspectFill
@@ -1121,13 +1162,6 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
                 conn.isVideoMirrored = mirrored
             }
         }
-        if let conn = photoOutput.connection(with: .video) {
-            setPortrait(conn)
-            if conn.isVideoMirroringSupported {
-                conn.automaticallyAdjustsVideoMirroring = false
-                conn.isVideoMirrored = mirrored
-            }
-        }
     }
 
     @objc private func flipTapped() {
@@ -1143,49 +1177,115 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
             if self.session.canAddInput(newInput) {
                 self.session.addInput(newInput)
                 self.currentInput = newInput
+                self.currentDevice = device
                 self.currentPosition = target
+                self.applyBestFormat(to: device)
             } else if let current = self.currentInput {
                 self.session.addInput(current)
             }
             self.session.commitConfiguration()
-            DispatchQueue.main.async { self.applyOrientationAndMirroring() }
+            DispatchQueue.main.async {
+                self.applyOrientationAndMirroring()
+                self.resetFocusToContinuous()
+            }
+        }
+    }
+
+    // MARK: タップでピント・露出合わせ
+    @objc private func focusTapped(_ gesture: UITapGestureRecognizer) {
+        guard let layer = previewLayer, let device = currentDevice else { return }
+        let point = gesture.location(in: stageView)
+        let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: point)
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = devicePoint
+                if device.isFocusModeSupported(.autoFocus) {
+                    device.focusMode = .autoFocus
+                }
+            }
+            if device.isExposurePointOfInterestSupported {
+                device.exposurePointOfInterest = devicePoint
+                if device.isExposureModeSupported(.autoExpose) {
+                    device.exposureMode = .autoExpose
+                }
+            }
+            device.isSubjectAreaChangeMonitoringEnabled = true
+            device.unlockForConfiguration()
+        } catch { }
+        showFocusIndicator(at: point)
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
+    private func resetFocusToContinuous() {
+        guard let device = currentDevice else { return }
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+            }
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            if device.isExposurePointOfInterestSupported {
+                device.exposurePointOfInterest = CGPoint(x: 0.5, y: 0.5)
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            device.unlockForConfiguration()
+        } catch { }
+    }
+
+    @objc private func subjectAreaChanged() {
+        resetFocusToContinuous()
+    }
+
+    private func showFocusIndicator(at point: CGPoint) {
+        focusIndicator.frame = CGRect(x: point.x - 34, y: point.y - 34, width: 68, height: 68)
+        focusIndicator.alpha = 1
+        focusIndicator.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
+        UIView.animate(withDuration: 0.18, animations: {
+            self.focusIndicator.transform = .identity
+        }) { _ in
+            UIView.animate(withDuration: 0.3, delay: 0.6, options: [], animations: {
+                self.focusIndicator.alpha = 0
+            })
         }
     }
 
     @objc private func shutterTapped() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let settings = AVCapturePhotoSettings()
+        // 次に届く映像フレームを撮影する（シャッター音は鳴らない）
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.photoOutput.capturePhoto(with: settings, delegate: self)
+            self?.captureRequested = true
         }
     }
 
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        if error != nil {
-            finishWithError("撮影に失敗しました。")
-            return
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard captureRequested else { return }
+        captureRequested = false
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        ciImage = ciImage.oriented(currentPosition == .front ? .leftMirrored : .right)
+        let origin = ciImage.extent.origin
+        if origin.x != 0 || origin.y != 0 {
+            ciImage = ciImage.transformed(by: CGAffineTransform(translationX: -origin.x, y: -origin.y))
         }
-        guard let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
-            finishWithError("撮影データを取得できませんでした。")
-            return
-        }
-        // 1080x1920（9:16）に cover で切り抜いて JPEG 化する
-        let target = CGSize(width: 1080, height: 1920)
-        let renderer = UIGraphicsImageRenderer(size: target)
-        let composed = renderer.image { _ in
-            let iw = image.size.width
-            let ih = image.size.height
-            let scale = max(target.width / iw, target.height / ih)
-            let dw = iw * scale
-            let dh = ih * scale
-            image.draw(in: CGRect(x: (target.width - dw) / 2, y: (target.height - dh) / 2, width: dw, height: dh))
-        }
+        let w = ciImage.extent.width
+        let h = ciImage.extent.height
+        guard w > 0, h > 0 else { return }
+        // 1080x1920（9:16）に cover で切り抜く
+        let scale = max(1080 / w, 1920 / h)
+        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let cropRect = CGRect(x: (w * scale - 1080) / 2, y: (h * scale - 1920) / 2, width: 1080, height: 1920)
+        guard let cgImage = ciContext.createCGImage(scaled, from: cropRect) else { return }
+        let image = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
         DispatchQueue.main.async { [weak self] in
             guard let self = self, !self.finished else { return }
             self.finished = true
             self.stopSession()
-            self.dismiss(animated: true) { self.onCapturedImage?(composed) }
+            self.dismiss(animated: true) { self.onCapturedImage?(image) }
         }
     }
 
