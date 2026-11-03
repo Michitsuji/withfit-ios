@@ -381,7 +381,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
   const albRef = useRef(null);
   const camFileRef = useRef(null);
   const videoRef = useRef(null);
-  const overlayRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
   const streamRef = useRef(null);
   const [img, setImg] = useState(null);
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
@@ -421,8 +421,9 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        // 出力は1080x1920なので、それ以上の解像度はメモリを圧迫するだけ
-        video: { facingMode: fm, width: { ideal: 1080 }, height: { ideal: 1920 } },
+        // 出力は1080x1920なので、それ以上の解像度はメモリを圧迫するだけ。
+        // 縦横比も指定して、最初から9:16に合った映像モードを選ばせる。
+        video: { facingMode: fm, width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 0.5625 } },
       });
       streamRef.current = stream;
       setFacing(fm);
@@ -444,13 +445,51 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     }
   }, [live]);
 
-  // ライブ中のオーバーレイ描画
+  // ライブ中はプレビュー用 canvas に映像＋オーバーレイを毎フレーム合成する。
+  // CSSのobject-fitに任せず、撮影時と全く同じcover計算で描くので、
+  // カメラ切替時もズームが跳ねず、最初から画面に合った構図で表示される。
   useEffect(() => {
-    if (live && overlayRef.current) {
-      const octx = overlayRef.current.getContext('2d');
-      drawShareCard(octx, null, { s: 1, x: 0, y: 0 }, model, { transparent: true });
+    if (!live) return;
+    if (!overlayCanvasRef.current) {
+      const oc = document.createElement('canvas');
+      oc.width = CW;
+      oc.height = CH;
+      drawShareCard(oc.getContext('2d'), null, { s: 1, x: 0, y: 0 }, model, { transparent: true });
+      overlayCanvasRef.current = oc;
     }
-  }, [live, model]);
+    let raf = 0;
+    const loop = () => {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, CW, CH);
+        if (video && video.videoWidth) {
+          const iw = video.videoWidth;
+          const ih = video.videoHeight;
+          const scale = Math.max(CW / iw, CH / ih);
+          const dw = iw * scale;
+          const dh = ih * scale;
+          const dx = (CW - dw) / 2;
+          const dy = (CH - dh) / 2;
+          if (facing === 'user') {
+            ctx.save();
+            ctx.translate(CW, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, dx, dy, dw, dh);
+            ctx.restore();
+          } else {
+            ctx.drawImage(video, dx, dy, dw, dh);
+          }
+        }
+        if (overlayCanvasRef.current) ctx.drawImage(overlayCanvasRef.current, 0, 0);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [live, facing, model]);
 
   useEffect(() => {
     if (autoPick === 'camera') { const t = setTimeout(() => openCamera('environment'), 350); return () => clearTimeout(t); }
@@ -613,30 +652,18 @@ export function ShareImageModal({ post, autoPick, onClose }) {
 
       <div ref={stageBoxRef} className="flex-1 min-h-0 w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
         <div className="relative shrink-0" style={{ width: stage.w, height: stage.h }}>
-          {live ? (
-            <div className="absolute inset-0 rounded-2xl overflow-hidden bg-black">
-              <video
-                ref={videoRef}
-                playsInline
-                muted
-                autoPlay
-                className="absolute inset-0 w-full h-full object-cover"
-                style={facing === 'user' ? { transform: 'scaleX(-1)' } : undefined}
-              />
-              <canvas ref={overlayRef} width={CW} height={CH} className="absolute inset-0 w-full h-full pointer-events-none" />
-            </div>
-          ) : (
-            <canvas
-              ref={canvasRef}
-              width={CW}
-              height={CH}
-              className="w-full h-full block rounded-2xl touch-none select-none bg-black"
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            />
-          )}
+          <canvas
+            ref={canvasRef}
+            width={CW}
+            height={CH}
+            className="w-full h-full block rounded-2xl touch-none select-none bg-black"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          />
+          {/* ライブカメラ映像の受け口（表示は canvas 側で行うため不可視にしておく） */}
+          <video ref={videoRef} playsInline muted autoPlay className="absolute w-px h-px opacity-0 pointer-events-none" />
           <input ref={albRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
           <input ref={camFileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
         </div>
