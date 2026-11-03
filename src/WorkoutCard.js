@@ -759,7 +759,7 @@ function WorkoutCard({ post, currentUser, accountsInfo, onEdit, onDelete, onTogg
           )  : null}
         </div>
         <div className="flex items-center gap-1.5 pr-4">
-          {onShareImage && post.items && post.items.length > 0 && (
+          {onShareImage && isMyPost && post.items && post.items.length > 0 && (
             <button onClick={() => onShareImage(post)} className="text-slate-800 dark:text-slate-200 transition-transform active:scale-90 hover:text-slate-500 mr-1" title="シェア画像を作成">
               <Camera size={26} />
             </button>

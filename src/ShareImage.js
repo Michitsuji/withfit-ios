@@ -1,12 +1,12 @@
 // ==========================================
 // ShareImage.js — トレーニング記録のシェア画像（Strava風コラージュ）
-// 投稿カードのUIに合わせた記録オーバーレイを写真に合成し、
-// Canvas(1080x1920) で描画してネイティブ共有シートへ渡す。
 // デザイン確定: v10（枠なし・写真全面、上部=投稿カードUI準拠の記録、
 // 下部=種目数/set/時間を大きく、総負荷量・消費は小さく、右下ワードマーク）
+// 記録が多い場合は 左→右2列、それでも収まらなければ3列に自動で流す。
+// 撮影はライブカメラ（映像に記録を重ねたまま撮影）とアルバム選択の両対応。
 // ==========================================
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Camera, Image as ImageIcon, Share, RotateCcw } from 'lucide-react';
+import { X, Camera, Image as ImageIcon, Share, RotateCcw, SwitchCamera, ChevronLeft } from 'lucide-react';
 import { calculateWorkoutTotals } from './utils';
 import { isNativeIosApp, postNativeMessage, triggerHaptic } from './nativeBridge';
 
@@ -155,8 +155,8 @@ function packColumns(blocks, maxCols, k, budget, overflowLast = false) {
 
   blocks.forEach((block, bi) => {
     if (bi > 0) {
-      if (used + gapH > budget) newColumn();
-      else { cur().push({ kind: 'gap', y: used, h: gapH }); used += gapH; }
+      if (used + gapH > budget && used > 0) newColumn();
+      else if (used > 0) { cur().push({ kind: 'gap', y: used, h: gapH }); used += gapH; }
     }
     // 見出しは最低1行と一緒に置く
     const need = headerH + (block.rows.length ? rowH : 0);
@@ -185,21 +185,33 @@ function layoutBlocks(blocks) {
 }
 
 // ---- Canvas 描画 ----
-function drawShareCard(ctx, img, view, model) {
+// opts.transparent: 背景・写真を描かず文字とグラデだけ（ライブカメラの重ね表示用）
+// opts.mirror: 写真を左右反転して描く（インカメラ撮影用）
+function drawShareCard(ctx, img, view, model, opts = {}) {
   ctx.clearRect(0, 0, CW, CH);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, CW, CH);
+  if (!opts.transparent) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, CW, CH);
+  }
 
   if (img) {
-    const iw = img.naturalWidth || img.width;
-    const ih = img.naturalHeight || img.height;
+    const iw = img.videoWidth || img.naturalWidth || img.width;
+    const ih = img.videoHeight || img.naturalHeight || img.height;
     const base = Math.max(CW / iw, CH / ih);
     const scale = base * (view.s || 1);
     const dw = iw * scale;
     const dh = ih * scale;
     const dx = (CW - dw) / 2 + (view.x || 0);
     const dy = (CH - dh) / 2 + (view.y || 0);
-    ctx.drawImage(img, dx, dy, dw, dh);
+    if (opts.mirror) {
+      ctx.save();
+      ctx.translate(CW, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, dx, dy, dw, dh);
+    }
   }
 
   // グラデーション（上・下）
@@ -366,26 +378,85 @@ function drawShareCard(ctx, img, view, model) {
 // ---- モーダル ----
 export function ShareImageModal({ post, autoPick, onClose }) {
   const canvasRef = useRef(null);
-  const camRef = useRef(null);
   const albRef = useRef(null);
+  const camFileRef = useRef(null);
+  const videoRef = useRef(null);
+  const overlayRef = useRef(null);
+  const streamRef = useRef(null);
   const [img, setImg] = useState(null);
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
   const [shared, setShared] = useState(false);
+  const [live, setLive] = useState(false);
+  const [facing, setFacing] = useState('environment');
+  const [liveError, setLiveError] = useState('');
   const pointersRef = useRef(new Map());
   const lastPinchRef = useRef(null);
   const model = useMemo(() => buildShareModel(post), [post]);
 
+  const stopStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
+      streamRef.current = null;
+    }
+  };
+  const stopLive = () => { stopStream(); setLive(false); };
+
+  useEffect(() => () => stopStream(), []);
+
+  const openCamera = async (fm) => {
+    setLiveError('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setLiveError('この環境ではライブカメラが使えません。通常のカメラで撮影してください。');
+      return;
+    }
+    stopStream();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: fm, width: { ideal: 2160 }, height: { ideal: 3840 } },
+      });
+      streamRef.current = stream;
+      setFacing(fm);
+      setLive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (e) {
+      setLiveError('カメラを起動できませんでした。通常のカメラで撮影するか、アルバムから選んでください。');
+    }
+  };
+
+  // ライブ開始後に video へストリームを接続
   useEffect(() => {
-    if (autoPick === 'camera') { const t = setTimeout(() => camRef.current && camRef.current.click(), 350); return () => clearTimeout(t); }
-    if (autoPick === 'album') { const t = setTimeout(() => albRef.current && albRef.current.click(), 350); return () => clearTimeout(t); }
-  }, [autoPick]);
+    if (live && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [live]);
+
+  // ライブ中のオーバーレイ描画
+  useEffect(() => {
+    if (live && overlayRef.current) {
+      const octx = overlayRef.current.getContext('2d');
+      drawShareCard(octx, null, { s: 1, x: 0, y: 0 }, model, { transparent: true });
+    }
+  }, [live, model]);
 
   useEffect(() => {
+    if (autoPick === 'camera') { const t = setTimeout(() => openCamera('environment'), 350); return () => clearTimeout(t); }
+    if (autoPick === 'album') { const t = setTimeout(() => albRef.current && albRef.current.click(), 350); return () => clearTimeout(t); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPick]);
+
+  // プレビュー描画（ライブ中はプレビュー用 canvas が無いので何もしない）
+  useEffect(() => {
+    if (live) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     drawShareCard(ctx, img, view, model);
-  }, [img, view, model]);
+  }, [img, view, model, live]);
 
   const handleFile = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -395,6 +466,42 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     const image = new Image();
     image.onload = () => { setImg(image); setView({ s: 1, x: 0, y: 0 }); };
     image.src = url;
+  };
+
+  const captureLive = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    triggerHaptic('medium');
+    // 写真だけを切り取る（オーバーレイはプレビュー/共有時に一度だけ重ねる）
+    const c = document.createElement('canvas');
+    c.width = CW;
+    c.height = CH;
+    const cctx = c.getContext('2d');
+    cctx.fillStyle = '#000';
+    cctx.fillRect(0, 0, CW, CH);
+    const iw = video.videoWidth;
+    const ih = video.videoHeight;
+    const scale = Math.max(CW / iw, CH / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+    const dx = (CW - dw) / 2;
+    const dy = (CH - dh) / 2;
+    if (facing === 'user') {
+      cctx.save();
+      cctx.translate(CW, 0);
+      cctx.scale(-1, 1);
+      cctx.drawImage(video, dx, dy, dw, dh);
+      cctx.restore();
+    } else {
+      cctx.drawImage(video, dx, dy, dw, dh);
+    }
+    c.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+      image.onload = () => { setImg(image); setView({ s: 1, x: 0, y: 0 }); stopLive(); };
+      image.src = url;
+    }, 'image/png');
   };
 
   // パン＆ピンチ（プレビュー上で構図を調整）
@@ -409,6 +516,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     const dy = e.clientY - prev.y;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const canvas = canvasRef.current;
+    if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const toCanvas = CW / rect.width;
     if (pointersRef.current.size === 1) {
@@ -458,58 +566,101 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     }, 'image/png');
   };
 
+  const handleClose = () => { stopLive(); onClose(); };
+  const stageWidth = 'min(430px, 94vw, calc((100dvh - 265px) * 0.5625))';
+
   return (
-    <div className="fixed inset-0 z-[70] bg-black/85 flex flex-col" onClick={onClose}>
-      <div className="flex items-center justify-between px-4 py-3" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[70] bg-slate-950 flex flex-col" style={{ height: '100dvh' }} onClick={handleClose}>
+      <div className="flex items-center justify-between px-4 py-3 shrink-0" onClick={(e) => e.stopPropagation()}>
         <div className="text-white font-bold text-base">シェア画像を作成</div>
-        <button onClick={onClose} className="text-white/80 p-1.5 rounded-lg hover:bg-white/10"><X size={22} /></button>
+        <button onClick={handleClose} className="text-white/80 p-1.5 rounded-lg hover:bg-white/10"><X size={22} /></button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4" onClick={(e) => e.stopPropagation()}>
-        <div className="mx-auto w-full max-w-[430px]">
-          <canvas
-            ref={canvasRef}
-            width={CW}
-            height={CH}
-            className="w-full rounded-2xl touch-none select-none bg-black"
-            style={{ aspectRatio: '9 / 16' }}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-          />
-          <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+      <div className="flex-1 min-h-0 flex items-center justify-center px-4" onClick={(e) => e.stopPropagation()}>
+        <div className="relative" style={{ width: stageWidth }}>
+          {live ? (
+            <div className="relative w-full rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: '9 / 16' }}>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                autoPlay
+                className="absolute inset-0 w-full h-full object-cover"
+                style={facing === 'user' ? { transform: 'scaleX(-1)' } : undefined}
+              />
+              <canvas ref={overlayRef} width={CW} height={CH} className="absolute inset-0 w-full h-full pointer-events-none" />
+            </div>
+          ) : (
+            <canvas
+              ref={canvasRef}
+              width={CW}
+              height={CH}
+              className="w-full rounded-2xl touch-none select-none bg-black"
+              style={{ aspectRatio: '9 / 16' }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            />
+          )}
           <input ref={albRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+          <input ref={camFileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+        </div>
+      </div>
 
-          {!img ? (
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <label className="flex items-center justify-center gap-2 bg-blue-600 text-white font-bold rounded-xl py-3.5 cursor-pointer active:scale-[0.98] transition-transform">
+      <div className="shrink-0 px-4 pt-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 92px)' }} onClick={(e) => e.stopPropagation()}>
+        {live ? (
+          <div className="flex items-center justify-between max-w-[430px] mx-auto">
+            <button onClick={stopLive} className="flex items-center gap-1 text-white/85 font-bold text-sm bg-white/10 rounded-full px-4 py-2.5">
+              <ChevronLeft size={18} /> 戻る
+            </button>
+            <button
+              onClick={captureLive}
+              aria-label="撮影"
+              className="w-[72px] h-[72px] rounded-full border-4 border-white bg-white/25 active:bg-white/50 transition-colors flex items-center justify-center"
+            >
+              <span className="w-[54px] h-[54px] rounded-full bg-white block" />
+            </button>
+            <button onClick={() => openCamera(facing === 'environment' ? 'user' : 'environment')} className="flex items-center gap-1 text-white/85 font-bold text-sm bg-white/10 rounded-full px-4 py-2.5">
+              <SwitchCamera size={18} /> 切替
+            </button>
+          </div>
+        ) : !img ? (
+          <div className="max-w-[430px] mx-auto">
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => openCamera('environment')} className="flex items-center justify-center gap-2 bg-blue-600 text-white font-bold rounded-xl py-3.5 active:scale-[0.98] transition-transform">
                 <Camera size={20} /> 写真を撮影
-                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
-              </label>
+              </button>
               <label className="flex items-center justify-center gap-2 bg-slate-700 text-white font-bold rounded-xl py-3.5 cursor-pointer active:scale-[0.98] transition-transform">
                 <ImageIcon size={20} /> アルバムから選ぶ
                 <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
               </label>
-              <p className="col-span-2 text-center text-xs text-white/60">写真を選ぶと、記録が自動で重なります</p>
             </div>
-          ) : (
-            <div className="mt-4">
-              <p className="text-center text-xs text-white/60 mb-3">写真はドラッグ移動・ピンチ拡大で位置を調整できます</p>
-              <div className="grid grid-cols-3 gap-3">
-                <button onClick={() => { setImg(null); setView({ s: 1, x: 0, y: 0 }); }} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
-                  <RotateCcw size={16} /> 写真を変更
-                </button>
-                <button onClick={() => albRef.current && albRef.current.click()} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
-                  <ImageIcon size={16} /> アルバム
-                </button>
-                <button onClick={handleShare} className="flex items-center justify-center gap-1.5 bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
-                  <Share size={16} /> {shared ? '開きました' : '共有する'}
-                </button>
+            {liveError ? (
+              <div className="mt-3">
+                <p className="text-center text-xs text-rose-300 mb-2">{liveError}</p>
+                <button onClick={() => camFileRef.current && camFileRef.current.click()} className="w-full bg-slate-700 text-white font-bold rounded-xl py-3">通常のカメラで撮影する</button>
               </div>
+            ) : (
+              <p className="text-center text-xs text-white/60 mt-3">撮影は、記録を重ねたまま撮れるライブカメラです</p>
+            )}
+          </div>
+        ) : (
+          <div className="max-w-[430px] mx-auto">
+            <p className="text-center text-xs text-white/60 mb-3">写真はドラッグ移動・ピンチ拡大で位置を調整できます</p>
+            <div className="grid grid-cols-3 gap-3">
+              <button onClick={() => { setImg(null); setView({ s: 1, x: 0, y: 0 }); }} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
+                <RotateCcw size={16} /> 写真を変更
+              </button>
+              <button onClick={() => openCamera('environment')} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
+                <Camera size={16} /> 撮り直す
+              </button>
+              <button onClick={handleShare} className="flex items-center justify-center gap-1.5 bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
+                <Share size={16} /> {shared ? '開きました' : '共有する'}
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
