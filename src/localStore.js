@@ -39,8 +39,14 @@ export function loadLocalDB(userId = 'global') {
 }
 
 // ユーザー別ローカルデータベースの保存（localStorage ＋ iOSネイティブファイル領域へ二重保存）
-export function saveLocalDB(userId = 'global', dbData) {
-  if (typeof window === 'undefined' || !dbData) return;
+// 注意: 保存はデバウンスする。スナップショットが短時間に連続発火すると、
+// DB全体の JSON 化＋localStorage 同期書き込み＋ネイティブへの転送がメインスレッドを
+// 塞いで画面が固まるため、最後の呼び出しから少し待って最新データだけを1回書く。
+// Firestore が正本なので、キャッシュ書き込みが最大で約1秒遅れても実害はない。
+// アプリが閉じられる/隠れるタイミングでは保留分を即時フラッシュする。
+const pendingSaveMap = new Map();
+
+function writeLocalDBNow(userId, dbData) {
   try {
     const payload = {
       ...dbData,
@@ -61,6 +67,46 @@ export function saveLocalDB(userId = 'global', dbData) {
   } catch (e) {
     console.warn('Failed to save local DB:', e);
   }
+}
+
+export function saveLocalDB(userId = 'global', dbData) {
+  if (typeof window === 'undefined' || !dbData) return;
+  const pending = pendingSaveMap.get(userId);
+  if (pending) {
+    pending.data = dbData; // 書き込み待ちの間は最新データで上書きするだけ（タイマーは延長しない）
+    return;
+  }
+  const entry = { data: dbData, timer: null };
+  entry.timer = setTimeout(() => {
+    pendingSaveMap.delete(userId);
+    writeLocalDBNow(userId, entry.data);
+  }, 900);
+  pendingSaveMap.set(userId, entry);
+}
+
+// 保留中の保存を取り消す（ログアウト時のセッション除去より古い保存が後から
+// 書き戻ってセッションが復活するのを防ぐ）
+export function cancelPendingSave(userId) {
+  const pending = pendingSaveMap.get(userId);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingSaveMap.delete(userId);
+  }
+}
+
+function flushPendingSaves() {
+  pendingSaveMap.forEach((entry, userId) => {
+    clearTimeout(entry.timer);
+    writeLocalDBNow(userId, entry.data);
+  });
+  pendingSaveMap.clear();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushPendingSaves);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushPendingSaves();
+  });
 }
 
 // localStorage のログインセッションが消えてしまった場合に、
@@ -171,6 +217,8 @@ export function diffObjectMap(localMapObj = {}, incomingUpdates = {}) {
 // ログアウトしたのにログイン状態に戻ってしまう（DB本体のキャッシュは残す）。
 export function clearLocalSession(userId) {
   if (typeof window === 'undefined' || !userId) return;
+  // 保留中の保存が残っていると、セッション除去後に古い内容が書き戻ってしまうため先に止める
+  cancelPendingSave(userId);
   try {
     const nativeData = (window.__WITHFIT_NATIVE_DB__ && window.__WITHFIT_NATIVE_DB__[userId]) || null;
     if (nativeData && typeof nativeData === 'object' && nativeData.session) {

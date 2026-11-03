@@ -19,7 +19,7 @@ import { ExercisesView } from './ExercisesView';
 import { FriendsView, FriendDetailModal } from './FriendsView';
 import { LoginScreen, ProfileModal, UserProfileModal } from './ProfileModals';
 import { SecretGame } from './CoachAndGame';
-import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap, recoverSessionFromNativeDB, clearLocalSession, initImageCache } from './localStore';
+import { loadLocalDB, saveLocalDB, diffArrayCollection, diffObjectMap, recoverSessionFromNativeDB, clearLocalSession, initImageCache, computeRecordHash } from './localStore';
 import {
   isNativeIosApp,
   postNativeMessage,
@@ -64,6 +64,22 @@ function sanitizeAccountsMap(map) {
 
 const VAPID_PUBLIC_KEY = 'BAty8GYk1zuoZVh-ZaSdcJsq_o-7vXJLXPNVNzlgsq9rd3wP-jQtclYEdu1MnnLN_0BnlmiKuoWH3X2YvOFl7aM';
 const DEVICE_TOKEN_STORAGE_KEY = 'withfit_device_fcm_token';
+
+// プレゼンス（最終アクティブ・オンライン状態）は全ユーザーが定期的に書き換える。
+// その変化だけで「データが変わった」扱いにすると、スナップショットのたびに
+// 全画面の再描画とローカルDB全体の保存が走り、画面のラグの主因になる。
+// プレゼンスだけの変化かどうかを判定し、保存対象から外すために使う。
+const PRESENCE_KEYS = ['lastActive', 'isAppOnline'];
+function stripPresenceFields(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const copy = { ...obj };
+  PRESENCE_KEYS.forEach((k) => { delete copy[k]; });
+  return copy;
+}
+function isPresenceOnlyChange(prev, next) {
+  if (!prev || !next) return false;
+  return computeRecordHash(stripPresenceFields(prev)) === computeRecordHash(stripPresenceFields(next));
+}
 
 function getInitialBootState() {
   let userId = null;
@@ -148,6 +164,14 @@ export default function App() {
   const hasRefreshedTokenForUser = useRef(null);
   // ログアウト直後に残っているFirebase認証セッションで自動再ログインしないためのガード
   const suppressAutoLoginRef = useRef(false);
+  // プレゼンスだけの変化を画面へ反映する間引き管理／アカウント初回ロード完了フラグ
+  const lastPresenceUiRef = useRef(0);
+  const accountsLoadedRef = useRef(false);
+  // ログイン処理の多重実行ガード（二重タップや自動ログインとの競合で
+  // セッションが上書きされ、ログインが不安定になるのを防ぐ）
+  const loginInFlightRef = useRef(false);
+  // プレゼンスのFirestore書き込み間引き管理（{ at, visible }）
+  const presenceWriteRef = useRef({ at: 0, visible: null });
   const prevIsTrainingRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
   const shownToastIdsRef = useRef(new Set((boot.notifications || []).map(n => n.id)));
@@ -975,6 +999,10 @@ export default function App() {
 
   useEffect(() => {
     if (suppressAutoLoginRef.current) return;
+    // アプリ独自セッションがある場合はそちらが正（起動時復元で currentUser が入る）。
+    // PIN/フレンドコードでのログイン直後にこの自動Googleログインが割り込むと
+    // セッションが競合するため、セッションがある間は発火させない。
+    try { if (localStorage.getItem('withfit_login_session')) return; } catch (e) {}
     if (firebaseUser && !firebaseUser.isAnonymous && dataLoaded.accounts && !currentUser) {
       handleGoogleLogin(firebaseUser);
     }
@@ -1133,6 +1161,16 @@ export default function App() {
         // 少し待って、それでも未ログインの場合のみ匿名ログインする。
         setTimeout(() => {
           if (!isMounted) return;
+          // 明示ログアウト直後や、アプリ独自セッションが有効（＝ログイン済み/
+          // ログイン処理中）のときは匿名ログインしない。正規ログインのセッションを
+          // 匿名セッションが上書きすると「ログインが不安定」になるため。
+          // 匿名セッションが要る場面（未ログインでのログイン試行）では、
+          // 各ログインハンドラ側で明示的に確保する。
+          try {
+            if (localStorage.getItem('withfit_explicit_logout')) return;
+            if (localStorage.getItem('withfit_login_session')) return;
+          } catch (e) {}
+          if (suppressAutoLoginRef.current) return;
           if (!auth.currentUser) {
             signInAnonymously(auth).catch(() => {});
           }
@@ -1405,11 +1443,24 @@ export default function App() {
        setDataLoaded(prev => ({ ...prev, accounts: true }));
        return;
     }
+    accountsLoadedRef.current = false;
     const meRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser);
     const unsub = onSnapshot(meRef, (docSnap) => {
         if (!docSnap.metadata.fromCache) setServerSynced(prev => prev.accounts ? prev : { ...prev, accounts: true });
        if (docSnap.exists()) {
           const newData = { ...docSnap.data(), ...myPrivateRef.current };
+          // プレゼンスだけの変化なら保存せず、画面反映も30秒に1回まで間引く（ラグ対策）
+          const prevSelf = localCacheRef.current.accountsInfo[currentUser];
+          if (accountsLoadedRef.current && isPresenceOnlyChange(prevSelf, newData)) {
+             const mergedMap = { ...localCacheRef.current.accountsInfo, [currentUser]: { ...prevSelf, ...newData } };
+             localCacheRef.current.accountsInfo = mergedMap;
+             if (Date.now() - lastPresenceUiRef.current > 30000) {
+                lastPresenceUiRef.current = Date.now();
+                setAccountsInfo(mergedMap);
+             }
+             return;
+          }
+          accountsLoadedRef.current = true;
           const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [currentUser]: newData });
           if (diff.hasChanges) {
              const safeSelfMap = sanitizeAccountsMap(diff.map);
@@ -1474,6 +1525,17 @@ export default function App() {
        unsubs.push(onSnapshot(fRef, (docSnap) => {
           if (docSnap.exists()) {
              const fData = { ...docSnap.data(), ...(friendSharedRef.current[fId] || {}) };
+             // プレゼンスだけの変化なら保存せず、画面反映も間引く（ラグ対策）
+             const prevFriend = localCacheRef.current.accountsInfo[fId];
+             if (accountsLoadedRef.current && isPresenceOnlyChange(prevFriend, fData)) {
+                const mergedMap = { ...localCacheRef.current.accountsInfo, [fId]: { ...prevFriend, ...fData } };
+                localCacheRef.current.accountsInfo = mergedMap;
+                if (Date.now() - lastPresenceUiRef.current > 30000) {
+                   lastPresenceUiRef.current = Date.now();
+                   setAccountsInfo(mergedMap);
+                }
+                return;
+             }
              const diff = diffObjectMap(localCacheRef.current.accountsInfo, { [fId]: fData });
              if (diff.hasChanges) {
                 setAccountsInfo(diff.map);
@@ -1507,24 +1569,30 @@ export default function App() {
     
     let isActiveSession = true;
     
-    const updatePresence = async (isVisible) => { 
+    const updatePresence = async (isVisible) => {
       if (!isActiveSession) return;
       const now = Date.now();
       if (isVisible) {
-         localStorage.setItem('withfit_login_session', JSON.stringify({ userId: currentUser, lastActive: now }));
+         try { localStorage.setItem('withfit_login_session', JSON.stringify({ userId: currentUser, lastActive: now })); } catch (e) {}
       }
       if (!db || !isOnline) return;
-      try { 
+      // Firestoreへのプレゼンス書き込みは「表示状態が変わったとき」と
+      // 「前回から約1分経過したとき」だけに間引く。全員が15秒ごとに書き込むと
+      // 全員の端末でスナップショットが発火し続けて画面が重くなるため。
+      const lastWrite = presenceWriteRef.current;
+      if (lastWrite.visible === isVisible && now - lastWrite.at < 55000) return;
+      presenceWriteRef.current = { at: now, visible: isVisible };
+      try {
         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser);
         const docSnap = await getDoc(docRef);
         if (!docSnap.exists()) return;
-        
-        await setDoc(docRef, { lastActive: now, isAppOnline: isVisible }, { merge: true }); 
-      } catch (e) {} 
+
+        await setDoc(docRef, { lastActive: now, isAppOnline: isVisible }, { merge: true });
+      } catch (e) {}
     };
-    
+
     updatePresence(true);
-    const intervalId = setInterval(() => updatePresence(true), 15000);
+    const intervalId = setInterval(() => updatePresence(true), 60000);
     
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -1543,9 +1611,27 @@ export default function App() {
     };
   }, [currentUser, isOnline]);
 
+  // 未ログイン状態でFirestoreを読むには匿名セッションが要る場面がある。
+  // ログアウト直後の自動匿名ログインは止めたので、ログイン試行の入口で明示的に確保する。
+  const ensureAnonymousAuth = async () => {
+    if (auth && !auth.currentUser) {
+      try { await signInAnonymously(auth); } catch (e) {}
+    }
+  };
+
   const handleLogin = async (username, pin) => {
-    if (!db) return false;
+    if (!db || loginInFlightRef.current) return false;
+    loginInFlightRef.current = true;
+    try {
+      return await handleLoginBody(username, pin);
+    } finally {
+      loginInFlightRef.current = false;
+    }
+  };
+
+  const handleLoginBody = async (username, pin) => {
     suppressAutoLoginRef.current = false;
+    await ensureAnonymousAuth();
     try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
     let accountData = null;
     try {
@@ -1570,6 +1656,7 @@ export default function App() {
           if (j && j.token) {
             await signInWithCustomToken(auth, j.token);
             setCurrentUser(username);
+            try { localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() })); } catch (e) {}
             try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true }); } catch (e) {}
             return true;
           }
@@ -1581,6 +1668,7 @@ export default function App() {
         return false;
       } else if (accountData.pin === pin) {
         setCurrentUser(username);
+        try { localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() })); } catch (e) {}
         try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true }); } catch (e) {}
       } else { return false; }
     }
@@ -1588,7 +1676,16 @@ export default function App() {
   };
 
   const handleGoogleLogin = async (googleUser) => {
-    if (!db || !googleUser) return false;
+    if (!db || !googleUser || loginInFlightRef.current) return false;
+    loginInFlightRef.current = true;
+    try {
+      return await handleGoogleLoginBody(googleUser);
+    } finally {
+      loginInFlightRef.current = false;
+    }
+  };
+
+  const handleGoogleLoginBody = async (googleUser) => {
     try {
       let username = null;
       // 1) uidMap（認証UID→ユーザー名）で解決する
@@ -1679,7 +1776,16 @@ export default function App() {
 
   // Sign in with Apple（ネイティブ認証 → Firebase 連携 → appleUid でアカウント解決）
   const handleAppleLogin = async () => {
-    if (!db) return false;
+    if (!db || loginInFlightRef.current) return false;
+    loginInFlightRef.current = true;
+    try {
+      return await handleAppleLoginBody();
+    } finally {
+      loginInFlightRef.current = false;
+    }
+  };
+
+  const handleAppleLoginBody = async () => {
     suppressAutoLoginRef.current = false;
     try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
     let appleRes = null;
@@ -1746,6 +1852,16 @@ export default function App() {
   };
 
   const handleSecretLogin = async (friendCode, birthDate) => {
+    if (loginInFlightRef.current) return false;
+    loginInFlightRef.current = true;
+    try {
+      return await handleSecretLoginBody(friendCode, birthDate);
+    } finally {
+      loginInFlightRef.current = false;
+    }
+  };
+
+  const handleSecretLoginBody = async (friendCode, birthDate) => {
     suppressAutoLoginRef.current = false;
     try { localStorage.removeItem('withfit_explicit_logout'); } catch (e) {}
     const cleanCode = String(friendCode || '').trim();
@@ -1776,6 +1892,7 @@ export default function App() {
     } catch (e) { /* フォールバックへ */ }
     // --- 従来のクライアント照合（サーバー未設定時のみ） ---
     if (!db) return false;
+    await ensureAnonymousAuth();
     try {
       const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'accounts'), where('friendCode', '==', cleanCode), limit(1));
       const snap = await getDocs(q);
@@ -1800,10 +1917,17 @@ export default function App() {
     // これをしないと残った認証セッションから自動で再ログインしてしまう
     suppressAutoLoginRef.current = true;
     if (currentUser && db) {
-      try {
+      // ログアウト前の後片付け（トークン除去・オフライン化）。
+      // ネットワーク不調で固まって「ログアウトできない」状態にならないよう、
+      // 最大3秒で見切って必ずサインアウトまで進める。
+      const preSignOut = (async () => {
         await removeDeviceTokenFromUserAccount(currentUser);
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { isAppOnline: false, lastActive: Date.now() }, { merge: true });
-      } catch (e) {}
+      })();
+      await Promise.race([
+        preSignOut.catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 3000))
+      ]);
     }
     try {
       await signOut(auth);

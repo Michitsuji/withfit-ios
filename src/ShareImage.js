@@ -90,8 +90,18 @@ export function buildShareModel(post) {
   const dt = new Date(post.timestamp || post.date || Date.now());
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dateText = `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, '0')}.${String(dt.getDate()).padStart(2, '0')} ${days[dt.getDay()]}`;
-  const cats = [...new Set(items.map(i => i.category).filter(Boolean))];
-  const titlePart = (cats.length === 1 && ['脚', '胸', '背中', '肩', '腕'].includes(cats[0])) ? `${cats[0]}トレ` : '';
+  // 部位は主要5部位のみ、セット数が多い順（同数なら登場順）に「胸・背中・腕トレ」形式で
+  const MAIN_CATS = ['脚', '胸', '背中', '肩', '腕'];
+  const catSets = {};
+  items.forEach((i) => {
+    if (i.category && MAIN_CATS.includes(i.category)) {
+      catSets[i.category] = (catSets[i.category] || 0) + (i.sets?.length || 0);
+    }
+  });
+  const orderedCats = Object.keys(catSets).sort((a, b) =>
+    (catSets[b] - catSets[a]) ||
+    (items.findIndex((i) => i.category === a) - items.findIndex((i) => i.category === b)));
+  const titlePart = orderedCats.length ? `${orderedCats.join('・')}トレ` : '';
   const header = [dateText, post.gymName || '', titlePart].filter(Boolean).join(' / ');
 
   const blocks = [];
