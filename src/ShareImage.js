@@ -247,14 +247,8 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
   ctx.shadowBlur = 6;
   ctx.shadowOffsetY = 2;
 
-  // ヘッダー（長いジム名＋全部位でも右端からはみ出さないよう、幅に合わせて縮小）
-  let headerPx = 31;
-  ctx.font = `700 ${headerPx}px ${FONT}`;
-  const headerMaxW = CW - MX * 2;
-  while (headerPx > 20 && ctx.measureText(model.header).width > headerMaxW) {
-    headerPx -= 1;
-    ctx.font = `700 ${headerPx}px ${FONT}`;
-  }
+  // ヘッダー（文字サイズは固定）
+  ctx.font = `700 31px ${FONT}`;
   ctx.fillStyle = COL.white;
   ctx.fillText(model.header, MX, 44);
 
