@@ -401,9 +401,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 let editor = ShareEditorViewController()
                 editor.overlayImage = overlay
                 editor.autoOpen = autoOpen
-                editor.onShareRequested = { [weak self] items in
-                    self?.dismissShareEditorAndShare(items)
-                }
                 editor.modalPresentationStyle = .fullScreen
                 var topVC: UIViewController = self
                 while let presented = topVC.presentedViewController { topVC = presented }
@@ -614,27 +611,6 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         topVC.present(avc, animated: true)
     }
 
-    // シェア編集画面からの共有: 編集画面を閉じてから、本体側で共有シートを表示する
-    private func dismissShareEditorAndShare(_ items: [Any]) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            var topVC: UIViewController = self
-            while let presented = topVC.presentedViewController { topVC = presented }
-            let presentSheet = {
-                let avc = UIActivityViewController(activityItems: items, applicationActivities: nil)
-                var host: UIViewController = self
-                while let presented = host.presentedViewController { host = presented }
-                avc.popoverPresentationController?.sourceView = host.view
-                avc.popoverPresentationController?.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.midY, width: 0, height: 0)
-                host.present(avc, animated: true)
-            }
-            if topVC is ShareEditorViewController {
-                topVC.dismiss(animated: true, completion: presentSheet)
-            } else {
-                presentSheet()
-            }
-        }
-    }
 
     func sendToWeb(payload: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
@@ -1467,13 +1443,11 @@ final class ShareCameraViewController: UIViewController, AVCaptureVideoDataOutpu
 // UIは白ベース。背景選択は廃止（写真・動画は常に全面を覆う）。
 // 注意: 画像生成は必ず format.scale = 1（等倍）。デフォルトは画面倍率（3倍）で
 // 3240x5760の巨大画像になり、共有・保存が固まる原因になる。
-// 共有は、編集画面を閉じてから本体側でシートを出す（onShareRequested 経由）。
-// 編集画面が表示チェーンに残ったままだとシート表示で固まる事象への対策。
+// 共有は共有シートを廃止し、Instagramストーリーズ共有ボタンに一本化した
+// （要: Info.plist の WithFitFacebookAppID に Meta アプリIDを設定）。
 final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate {
     var overlayImage: UIImage?
     var autoOpen: String = "none"
-    // 共有リクエスト（本体側が編集画面を閉じてからシートを表示する）
-    var onShareRequested: (([Any]) -> Void)?
 
     private enum MediaKind { case none, photo, video }
     private var step: Int = 1
@@ -1518,13 +1492,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private let overlayView = UIImageView()
     private let focusIndicator = UIView()
     private let recordTimeLabel = UILabel()
-    private let emptyIcon = UIImageView()
-    private let emptyLabel = UILabel()
     private let hintLabel = UILabel()
     private var closeButton: UIButton!
     private var titleLabel: UILabel!
-    private var photoSourceButton: UIButton!
-    private var videoSourceButton: UIButton!
     private var albumButton: UIButton!
     private var shutterButton: UIButton!
     private var shutterInner: UIView!
@@ -1534,7 +1504,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var changeButton: UIButton!
     private var retakeButton: UIButton!
     private var saveButton: UIButton!
-    private var shareButton: UIButton!
+    private var instagramButton: UIButton!
     private var busyOverlay: UIView!
     private var busyLabel: UILabel!
     private var busySpinner: UIActivityIndicatorView!
@@ -1564,15 +1534,21 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         layoutAll()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // アルバムを開く初回だけはカメラを起動しない。それ以外（初回表示・ピッカーを
+        // 閉じて戻った時）はステップ1ならカメラを起動/再開する
+        if step == 1 && !cameraActive && !(autoOpen == "album" && !didAutoOpen) {
+            activateCamera(photoMode: cameraModePhoto)
+        }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         if !didAutoOpen {
             didAutoOpen = true
             if autoOpen == "album" {
                 openPicker()
-            } else {
-                // 'camera' / 'none'（投稿カードのカメラボタン）: そのまま内蔵カメラを起動
-                activateCamera(photoMode: true)
             }
         }
     }
@@ -1622,19 +1598,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         videoView.isHidden = true
         stageView.addSubview(videoView)
 
-        emptyIcon.image = UIImage(systemName: "photo.on.rectangle.angled", withConfiguration: UIImage.SymbolConfiguration(pointSize: 52, weight: .light))
-        emptyIcon.tintColor = UIColor.white.withAlphaComponent(0.35)
-        emptyIcon.contentMode = .center
-        stageView.addSubview(emptyIcon)
-        emptyLabel.text = "写真・動画を選んでください"
-        emptyLabel.textColor = UIColor.white.withAlphaComponent(0.85)
-        emptyLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        emptyLabel.textAlignment = .center
-        emptyLabel.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-        emptyLabel.layer.cornerRadius = 10
-        emptyLabel.clipsToBounds = true
-        stageView.addSubview(emptyLabel)
-
         overlayView.image = overlayImage
         overlayView.contentMode = .scaleToFill
         overlayView.isUserInteractionEnabled = false
@@ -1672,11 +1635,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         hintLabel.textAlignment = .center
         view.addSubview(hintLabel)
 
-        photoSourceButton = makeSourceButton(symbol: "camera.fill", title: "写真を撮影", filled: true, action: #selector(photoSourceTapped))
-        videoSourceButton = makeSourceButton(symbol: "video.fill", title: "動画を撮影", filled: false, action: #selector(videoSourceTapped))
         albumButton = makeSourceButton(symbol: "photo.on.rectangle", title: "アルバムから選ぶ", filled: false, action: #selector(openPickerTapped))
-        view.addSubview(photoSourceButton)
-        view.addSubview(videoSourceButton)
         view.addSubview(albumButton)
 
         // カメラ操作（左端=写真/動画モード切替アイコン、中央=シャッター、右端=前後切替アイコン）
@@ -1702,11 +1661,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         changeButton = makeToolButton(symbol: "arrow.uturn.backward", title: "選び直す", action: #selector(changeTapped))
         retakeButton = makeToolButton(symbol: "camera", title: "撮り直す", action: #selector(retakeTapped))
         saveButton = makeToolButton(symbol: "square.and.arrow.down", title: "保存", action: #selector(saveTapped))
-        shareButton = makeToolButton(symbol: "square.and.arrow.up", title: "共有する", action: #selector(shareTapped), emphasized: true)
+        instagramButton = makeInstagramButton()
         actionBar.contentView.addSubview(changeButton)
         actionBar.contentView.addSubview(retakeButton)
         actionBar.contentView.addSubview(saveButton)
-        actionBar.contentView.addSubview(shareButton)
+        actionBar.contentView.addSubview(instagramButton)
         view.addSubview(actionBar)
 
         busyOverlay = UIView()
@@ -1782,6 +1741,46 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         button.configuration = config
     }
 
+    private func makeInstagramButton() -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.image = instagramGlyph()
+        config.title = "Instagram"
+        config.imagePlacement = .top
+        config.imagePadding = 4
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 11, weight: .semibold)
+            return outgoing
+        }
+        let b = UIButton(configuration: config)
+        b.tintColor = .black
+        b.addTarget(self, action: #selector(instagramTapped), for: .touchUpInside)
+        return b
+    }
+
+    // Instagramのグリフ（角丸四角＋円＋点）を描いた画像
+    private func instagramGlyph(size: CGFloat = 24) -> UIImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format)
+        return renderer.image { _ in
+            let color = UIColor.black
+            let line: CGFloat = size * 0.085
+            let inset = line / 2 + size * 0.03
+            let rect = CGRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: size * 0.27)
+            path.lineWidth = line
+            color.setStroke()
+            path.stroke()
+            let circle = UIBezierPath(arcCenter: CGPoint(x: size / 2, y: size / 2), radius: size * 0.155, startAngle: 0, endAngle: .pi * 2, clockwise: true)
+            circle.lineWidth = line
+            circle.stroke()
+            let dot = UIBezierPath(arcCenter: CGPoint(x: size * 0.705, y: size * 0.295), radius: size * 0.048, startAngle: 0, endAngle: .pi * 2, clockwise: true)
+            color.setFill()
+            dot.fill()
+        }
+    }
+
     private func layoutAll() {
         let bounds = view.bounds
         let safeTop = view.safeAreaInsets.top
@@ -1799,8 +1798,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         previewLayer?.frame = cameraView.bounds
         overlayView.frame = stageView.bounds
         recordTimeLabel.frame = CGRect(x: stageW / 2 - 40, y: 12, width: 80, height: 24)
-        emptyIcon.frame = CGRect(x: (stageW - 72) / 2, y: stageH / 2 - 62, width: 72, height: 56)
-        emptyLabel.frame = CGRect(x: (stageW - 250) / 2, y: stageH / 2 + 2, width: 250, height: 26)
         updateMediaFrame()
 
         titleLabel.frame = CGRect(x: 64, y: safeTop + 8, width: bounds.width - 128, height: 38)
@@ -1811,13 +1808,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let albumY = bounds.height - safeBottom - 62
         albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
         let zoneY = albumY - 10 - 76
-        let halfW = (stageW - 10) / 2
-        photoSourceButton.frame = CGRect(x: stageX, y: zoneY + 12, width: halfW, height: 52)
-        videoSourceButton.frame = CGRect(x: stageX + halfW + 10, y: zoneY + 12, width: halfW, height: 52)
         shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
-        // 切替アイコンは画面の両端に置く
-        modeButton.frame = CGRect(x: 20, y: zoneY + 12, width: 52, height: 52)
-        flipButton.frame = CGRect(x: bounds.width - 20 - 52, y: zoneY + 12, width: 52, height: 52)
+        // 切替アイコンはシャッターから程よい距離（中心±105pt）に置く
+        modeButton.frame = CGRect(x: bounds.width / 2 - 105 - 26, y: zoneY + 12, width: 52, height: 52)
+        flipButton.frame = CGRect(x: bounds.width / 2 + 105 - 26, y: zoneY + 12, width: 52, height: 52)
 
         // ステップ2のツールバー
         let actionH: CGFloat = 74 + safeBottom
@@ -1830,7 +1824,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     private func layoutToolButtons() {
-        let buttons: [UIButton] = [changeButton, retakeButton, saveButton, shareButton].filter { !$0.isHidden }
+        let buttons: [UIButton] = [changeButton, retakeButton, saveButton, instagramButton].filter { !$0.isHidden }
         guard !buttons.isEmpty else { return }
         let w = view.bounds.width / CGFloat(buttons.count)
         for (i, b) in buttons.enumerated() {
@@ -1860,8 +1854,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private func updateBars() {
         let inStep1 = step == 1
         let camUI = inStep1 && cameraActive
-        photoSourceButton.isHidden = !inStep1 || cameraActive
-        videoSourceButton.isHidden = !inStep1 || cameraActive
         shutterButton.isHidden = !camUI
         modeButton.isHidden = !camUI
         flipButton.isHidden = !camUI
@@ -1869,13 +1861,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         albumButton.isHidden = !inStep1
         actionBar.isHidden = inStep1
         cameraView.isHidden = !cameraActive
-        emptyIcon.isHidden = mediaKind != .none || cameraActive
-        emptyLabel.isHidden = mediaKind != .none || cameraActive
         if inStep1 {
             if cameraActive {
                 hintLabel.text = cameraModePhoto ? "タップでピント合わせ・シャッターで撮影" : "シャッターで録画開始/停止（最大60秒）"
             } else {
-                hintLabel.text = "写真・動画から選べます"
+                hintLabel.text = ""
             }
         } else if mediaKind == .photo {
             hintLabel.text = "ドラッグ・ピンチで写真の位置を調整できます"
@@ -1890,9 +1880,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     // MARK: 内蔵カメラ
-    @objc private func photoSourceTapped() { activateCamera(photoMode: true) }
-    @objc private func videoSourceTapped() { activateCamera(photoMode: false) }
-
     private func activateCamera(photoMode: Bool) {
         guard step == 1, !isRecording else { return }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -1905,13 +1892,21 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                     if granted {
                         self.beginCamera(photoMode: photoMode)
                     } else {
-                        self.showNotice("カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。")
+                        self.showCameraDenied()
                     }
                 }
             }
         default:
-            showNotice("カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。")
+            showCameraDenied()
         }
+    }
+
+    private func showCameraDenied() {
+        let alert = UIAlertController(title: nil, message: "カメラの許可がありません。設定アプリで WithFit のカメラを許可してください。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.dismiss(animated: true)
+        })
+        present(alert, animated: true)
     }
 
     private func beginCamera(photoMode: Bool) {
@@ -1919,6 +1914,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         cameraModePhoto = photoMode
         // モード切替ボタンには「切り替え先」のアイコンを出す
         setCamIcon(modeButton, symbol: photoMode ? "video.fill" : "camera.fill")
+        updateShutterAppearance()
         updateBars()
         layoutAll()
         if !photoMode { ensureAudioPermission() }
@@ -2095,6 +2091,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         if isRecording { return }
         cameraModePhoto.toggle()
         setCamIcon(modeButton, symbol: cameraModePhoto ? "video.fill" : "camera.fill")
+        updateShutterAppearance()
         if !cameraModePhoto { ensureAudioPermission() }
         updateBars()
     }
@@ -2224,14 +2221,28 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private func updateRecordUI() {
         recordTimeLabel.text = String(format: "%02d:%02d", recordSeconds / 60, recordSeconds % 60)
         recordTimeLabel.textColor = isRecording ? .systemRed : .white
-        shutterInner.backgroundColor = isRecording ? .systemRed : UIColor.black.withAlphaComponent(0.85)
-        shutterInner.layer.cornerRadius = isRecording ? 10 : 26
-        let inset: CGFloat = isRecording ? 20 : 10
-        shutterInner.frame = CGRect(x: inset, y: inset, width: 72 - inset * 2, height: 72 - inset * 2)
+        updateShutterAppearance()
         flipButton.isEnabled = !isRecording
         flipButton.alpha = isRecording ? 0.35 : 1
         modeButton.isEnabled = !isRecording
         modeButton.alpha = isRecording ? 0.35 : 1
+    }
+
+    // シャッターの見た目: 写真=黒い円、動画=赤い円、録画中=赤い四角
+    private func updateShutterAppearance() {
+        if isRecording {
+            shutterInner.backgroundColor = .systemRed
+            shutterInner.layer.cornerRadius = 10
+            shutterInner.frame = CGRect(x: 20, y: 20, width: 32, height: 32)
+        } else if !cameraModePhoto {
+            shutterInner.backgroundColor = .systemRed
+            shutterInner.layer.cornerRadius = 26
+            shutterInner.frame = CGRect(x: 10, y: 10, width: 52, height: 52)
+        } else {
+            shutterInner.backgroundColor = UIColor.black.withAlphaComponent(0.85)
+            shutterInner.layer.cornerRadius = 26
+            shutterInner.frame = CGRect(x: 10, y: 10, width: 52, height: 52)
+        }
     }
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
@@ -2455,12 +2466,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     @objc private func openPickerTapped() {
         if isRecording { return }
-        if cameraActive {
-            cameraActive = false
-            stopCameraSession()
-            updateBars()
-            layoutAll()
-        }
         openPicker()
     }
 
@@ -2490,7 +2495,13 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: true)
-        guard let provider = results.first?.itemProvider else { return }
+        guard let provider = results.first?.itemProvider else {
+            // キャンセルして戻ったらカメラを再開する（何も選んでいない状態の画面は出さない）
+            if step == 1 && !cameraActive {
+                activateCamera(photoMode: cameraModePhoto)
+            }
+            return
+        }
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
             provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
                 guard let url = url else { return }
@@ -2626,53 +2637,45 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         changeButton.isEnabled = !on
         retakeButton.isEnabled = !on
         saveButton.isEnabled = !on
-        shareButton.isEnabled = !on
+        instagramButton.isEnabled = !on
     }
 
-    // MARK: 共有・保存
-    @objc private func shareTapped() {
+    // MARK: Instagram共有・保存
+    @objc private func instagramTapped() {
         if exporting { return }
+        let appId = Bundle.main.object(forInfoDictionaryKey: "WithFitFacebookAppID") as? String ?? ""
+        guard !appId.isEmpty else {
+            showNotice("Instagram連携は準備中です。")
+            return
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if mediaKind == .video {
             exporting = true
             exportVideo { [weak self] url in
                 guard let self = self else { return }
                 self.exporting = false
-                if let url = url {
-                    self.deliverShare(items: [url])
+                if let url = url, let data = try? Data(contentsOf: url) {
+                    self.openInstagramStories(appId: appId, items: ["com.instagram.sharedSticker.backgroundVideo": data])
                 } else {
                     self.showNotice("動画の書き出しに失敗しました。")
                 }
             }
             return
         }
-        guard let base = finalCache ?? renderFinal() else { return }
-        // 動いていた頃（v46）と同じく、デコード済みの通常画像として渡す
-        var item: Any = base
-        if let data = base.jpegData(compressionQuality: 0.92), let decoded = UIImage(data: data) {
-            item = decoded
-        }
-        deliverShare(items: [item])
+        guard let base = finalCache ?? renderFinal(),
+              let data = base.jpegData(compressionQuality: 0.92) else { return }
+        openInstagramStories(appId: appId, items: ["com.instagram.sharedSticker.backgroundImage": data])
     }
 
-    // 本体側に渡して、編集画面を閉じてからシートを出してもらう
-    private func deliverShare(items: [Any]) {
-        if let callback = onShareRequested {
-            callback(items)
+    // ペーストボード経由で Instagram ストーリーズ作成画面へ渡す（MetaアプリIDが必須）
+    private func openInstagramStories(appId: String, items: [String: Any]) {
+        UIPasteboard.general.setItems([items], options: [.expirationDate: Date().addingTimeInterval(60 * 5)])
+        var components = URLComponents(string: "instagram-stories://share")
+        components?.queryItems = [URLQueryItem(name: "source_application", value: appId)]
+        if let url = components?.url, UIApplication.shared.canOpenURL(url) {
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
         } else {
-            presentShareSheet(items: items)
-        }
-    }
-
-    private func presentShareSheet(items: [Any]) {
-        let avc = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            var topVC: UIViewController = self
-            while let presented = topVC.presentedViewController { topVC = presented }
-            avc.popoverPresentationController?.sourceView = topVC.view
-            avc.popoverPresentationController?.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
-            topVC.present(avc, animated: true)
+            showNotice("Instagramアプリが見つかりませんでした。")
         }
     }
 
