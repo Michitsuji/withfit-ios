@@ -386,6 +386,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
   const [img, setImg] = useState(null);
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
   const [shared, setShared] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [live, setLive] = useState(false);
   const [facing, setFacing] = useState('environment');
   const [liveError, setLiveError] = useState('');
@@ -501,7 +502,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
       const image = new Image();
       image.onload = () => { setImg(image); setView({ s: 1, x: 0, y: 0 }); stopLive(); };
       image.src = url;
-    }, 'image/png');
+    }, 'image/jpeg', 0.92);
   };
 
   // パン＆ピンチ（プレビュー上で構図を調整）
@@ -538,32 +539,37 @@ export function ShareImageModal({ post, autoPick, onClose }) {
 
   const handleShare = () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || sharing) return;
     triggerHaptic('light');
+    setSharing(true);
+    // PNGだと写真で数MBになりブリッジ転送で固まるため、JPEGで軽く渡す
     canvas.toBlob((blob) => {
-      if (!blob) return;
+      if (!blob) { setSharing(false); return; }
       if (isNativeIosApp()) {
         const reader = new FileReader();
         reader.onload = () => {
           const dataUrl = String(reader.result || '');
           const base64 = dataUrl.split(',')[1] || '';
+          setSharing(false);
           if (base64) {
             postNativeMessage({ type: 'SHARE_IMAGE', image: base64 });
             setShared(true);
             setTimeout(() => setShared(false), 2500);
           }
         };
+        reader.onerror = () => setSharing(false);
         reader.readAsDataURL(blob);
       } else if (navigator.share) {
-        const file = new File([blob], 'withfit-share.png', { type: 'image/png' });
-        navigator.share({ files: [file] }).catch(() => {});
+        const file = new File([blob], 'withfit-share.jpg', { type: 'image/jpeg' });
+        navigator.share({ files: [file] }).catch(() => {}).finally(() => setSharing(false));
       } else {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = 'withfit-share.png';
+        a.download = 'withfit-share.jpg';
         a.click();
+        setSharing(false);
       }
-    }, 'image/png');
+    }, 'image/jpeg', 0.9);
   };
 
   const handleClose = () => { stopLive(); onClose(); };
@@ -655,8 +661,8 @@ export function ShareImageModal({ post, autoPick, onClose }) {
               <button onClick={() => openCamera('environment')} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
                 <Camera size={16} /> 撮り直す
               </button>
-              <button onClick={handleShare} className="flex items-center justify-center gap-1.5 bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
-                <Share size={16} /> {shared ? '開きました' : '共有する'}
+              <button onClick={handleShare} disabled={sharing} className="flex items-center justify-center gap-1.5 bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm disabled:opacity-60">
+                <Share size={16} /> {sharing ? '準備中…' : shared ? '開きました' : '共有する'}
               </button>
             </div>
           </div>

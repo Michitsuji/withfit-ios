@@ -347,15 +347,27 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
             NativeAudioAndTimerManager.shared.triggerHaptic(style: style)
 
         case "SHARE_IMAGE":
-            if let b64 = payload["image"] as? String,
-               let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
-               let image = UIImage(data: data) {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
-                    avc.popoverPresentationController?.sourceView = self.view
-                    avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
-                    self.present(avc, animated: true)
+            // 大きな画像データのデコードとファイル書き込みはバックグラウンドで行い、
+            // 共有シートには一時ファイルの URL を渡す（メインスレッドを止めない）
+            if let b64 = payload["image"] as? String {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else { return }
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("withfit-share-\(UUID().uuidString).jpg")
+                    guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        let avc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        avc.popoverPresentationController?.sourceView = self.view
+                        avc.popoverPresentationController?.sourceRect = CGRect(x: self.view.bounds.midX, y: self.view.bounds.midY, width: 0, height: 0)
+                        if let presented = self.presentedViewController {
+                            presented.dismiss(animated: false) {
+                                self.present(avc, animated: true)
+                            }
+                        } else {
+                            self.present(avc, animated: true)
+                        }
+                    }
                 }
             }
 
@@ -622,6 +634,24 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
     }
 
     // MARK: - WKUIDelegate
+    // WebView 内コンテンツ（自前バンドル）からのカメラ/マイク取得はアプリ側で許可する。
+    // これにより getUserMedia の許可ダイアログが毎回出る問題を防ぐ
+    // （OSレベルのカメラ許可は初回のみ iOS が表示し、以降は設定に保持される）。
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+        let host = origin.host.lowercased()
+        if host == "localhost" || host == "127.0.0.1" {
+            decisionHandler(.grant)
+        } else {
+            decisionHandler(.deny)
+        }
+    }
+
     func webView(
         _ webView: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,
