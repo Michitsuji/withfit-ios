@@ -401,6 +401,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 let editor = ShareEditorViewController()
                 editor.overlayImage = overlay
                 editor.autoOpen = autoOpen
+                editor.onShareRequested = { [weak self] items in
+                    self?.dismissShareEditorAndShare(items)
+                }
                 editor.modalPresentationStyle = .fullScreen
                 var topVC: UIViewController = self
                 while let presented = topVC.presentedViewController { topVC = presented }
@@ -609,6 +612,28 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
         var topVC: UIViewController = self
         while let presented = topVC.presentedViewController { topVC = presented }
         topVC.present(avc, animated: true)
+    }
+
+    // シェア編集画面からの共有: 編集画面を閉じてから、本体側で共有シートを表示する
+    private func dismissShareEditorAndShare(_ items: [Any]) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            var topVC: UIViewController = self
+            while let presented = topVC.presentedViewController { topVC = presented }
+            let presentSheet = {
+                let avc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+                var host: UIViewController = self
+                while let presented = host.presentedViewController { host = presented }
+                avc.popoverPresentationController?.sourceView = host.view
+                avc.popoverPresentationController?.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.midY, width: 0, height: 0)
+                host.present(avc, animated: true)
+            }
+            if topVC is ShareEditorViewController {
+                topVC.dismiss(animated: true, completion: presentSheet)
+            } else {
+                presentSheet()
+            }
+        }
     }
 
     func sendToWeb(payload: [String: Any]) {
@@ -1437,17 +1462,20 @@ final class ShareCameraViewController: UIViewController, AVCaptureVideoDataOutpu
 }
 
 // MARK: - Share Editor (シェア画像・動画の編集画面: 全面Swift)
-// 1画面に統合: ステップ1=作成（ステージ内蔵カメラで撮影/録画・アルバム・背景が同じ画面）、
+// 1画面に統合: ステップ1=作成（ステージ内蔵カメラで撮影/録画・アルバムが同じ画面）、
 // ステップ2=編集・保存・共有。記録部分は Web 側の透明PNG（overlayImage）を重ねるだけ。
+// UIは白ベース。背景選択は廃止（写真・動画は常に全面を覆う）。
 // 注意: 画像生成は必ず format.scale = 1（等倍）。デフォルトは画面倍率（3倍）で
 // 3240x5760の巨大画像になり、共有・保存が固まる原因になる。
-// 共有シートの表示は v46 で実績のある手順に統一する（メインキューへ回してから、
-// 最前面の画面から、ポップオーバーの起点を画面中央にして表示）。
-final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIColorPickerViewControllerDelegate, UIGestureRecognizerDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate {
+// 共有は、編集画面を閉じてから本体側でシートを出す（onShareRequested 経由）。
+// 編集画面が表示チェーンに残ったままだとシート表示で固まる事象への対策。
+final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureFileOutputRecordingDelegate {
     var overlayImage: UIImage?
     var autoOpen: String = "none"
+    // 共有リクエスト（本体側が編集画面を閉じてからシートを表示する）
+    var onShareRequested: (([Any]) -> Void)?
 
-    private enum MediaKind { case none, photo, video, background }
+    private enum MediaKind { case none, photo, video }
     private var step: Int = 1
     private var mediaKind: MediaKind = .none
     private var photo: UIImage?
@@ -1456,12 +1484,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
     private var loopObserver: NSObjectProtocol?
-
-    private enum BackgroundKind { case color(UIColor), pattern(Int) }
-    private var background: BackgroundKind = .color(.black)
-    private var bgChosenByUser = false
-    private var customColor: UIColor = UIColor(red: 0.1, green: 0.35, blue: 0.75, alpha: 1)
-    private var selectedBgTag: Int = 0
+    private var finalCache: UIImage?
+    private var cacheGeneration = 0
 
     private var viewS: CGFloat = 1
     private var viewX: CGFloat = 0
@@ -1481,13 +1505,13 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var currentDevice: AVCaptureDevice?
     private var currentPosition: AVCaptureDevice.Position = .back
     private var sessionConfigured = false
+    private var audioInputAdded = false
     private var isRecording = false
     private var discardRecording = false
     private var recordTimer: Timer?
     private var recordSeconds = 0
 
     private let stageView = UIView()
-    private let backgroundView = UIImageView()
     private let cameraView = UIView()
     private let photoView = UIImageView()
     private let videoView = UIView()
@@ -1502,7 +1526,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var photoSourceButton: UIButton!
     private var videoSourceButton: UIButton!
     private var albumButton: UIButton!
-    private var proceedButton: UIButton!
     private var shutterButton: UIButton!
     private var shutterInner: UIView!
     private var modeButton: UIButton!
@@ -1512,9 +1535,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var retakeButton: UIButton!
     private var saveButton: UIButton!
     private var shareButton: UIButton!
-    private var bgScroll: UIScrollView!
-    private var bgButtons: [UIButton] = []
-    private var wheelGradient: CAGradientLayer?
     private var busyOverlay: UIView!
     private var busyLabel: UILabel!
     private var busySpinner: UIActivityIndicatorView!
@@ -1526,22 +1546,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var saving = false
     private var exporting = false
     private var exportTimer: Timer?
-    private var patternCache: [Int: UIImage] = [:]
-
-    // 単色プリセットは3色（黒・ネイビー・ワイン）
-    private let presetColors: [UIColor] = [
-        .black,
-        UIColor(red: 0.08, green: 0.13, blue: 0.24, alpha: 1),
-        UIColor(red: 0.29, green: 0.08, blue: 0.13, alpha: 1),
-    ]
-    private let wheelTag = 100
-    private let patternTagBase = 10
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = .white
         buildUI()
-        applyBackgroundToStage()
         updateBars()
         NotificationCenter.default.addObserver(self, selector: #selector(subjectAreaChanged), name: .AVCaptureDeviceSubjectAreaDidChange, object: nil)
     }
@@ -1578,7 +1587,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private func buildUI() {
         titleLabel = UILabel()
         titleLabel.text = "シェア画像を作成"
-        titleLabel.textColor = .white
+        titleLabel.textColor = .black
         titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
         titleLabel.textAlignment = .center
         view.addSubview(titleLabel)
@@ -1586,8 +1595,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         var closeConfig = UIButton.Configuration.filled()
         closeConfig.image = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold))
         closeConfig.cornerStyle = .capsule
-        closeConfig.baseBackgroundColor = UIColor.white.withAlphaComponent(0.12)
-        closeConfig.baseForegroundColor = .white
+        closeConfig.baseBackgroundColor = UIColor.black.withAlphaComponent(0.06)
+        closeConfig.baseForegroundColor = .black
         closeButton = UIButton(configuration: closeConfig)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         view.addSubview(closeButton)
@@ -1596,12 +1605,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         stageView.clipsToBounds = true
         stageView.layer.cornerRadius = 20
         stageView.layer.borderWidth = 1
-        stageView.layer.borderColor = UIColor.white.withAlphaComponent(0.08).cgColor
+        stageView.layer.borderColor = UIColor.black.withAlphaComponent(0.08).cgColor
         view.addSubview(stageView)
-
-        backgroundView.contentMode = .scaleToFill
-        backgroundView.isUserInteractionEnabled = false
-        stageView.addSubview(backgroundView)
 
         cameraView.isUserInteractionEnabled = false
         cameraView.isHidden = true
@@ -1618,10 +1623,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         stageView.addSubview(videoView)
 
         emptyIcon.image = UIImage(systemName: "photo.on.rectangle.angled", withConfiguration: UIImage.SymbolConfiguration(pointSize: 52, weight: .light))
-        emptyIcon.tintColor = UIColor.white.withAlphaComponent(0.18)
+        emptyIcon.tintColor = UIColor.white.withAlphaComponent(0.35)
         emptyIcon.contentMode = .center
         stageView.addSubview(emptyIcon)
-        emptyLabel.text = "写真・動画・背景を選んでください"
+        emptyLabel.text = "写真・動画を選んでください"
         emptyLabel.textColor = UIColor.white.withAlphaComponent(0.85)
         emptyLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
         emptyLabel.textAlignment = .center
@@ -1662,12 +1667,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         tap.delegate = self
         stageView.addGestureRecognizer(tap)
 
-        hintLabel.textColor = UIColor.white.withAlphaComponent(0.55)
+        hintLabel.textColor = UIColor.black.withAlphaComponent(0.5)
         hintLabel.font = .systemFont(ofSize: 12)
         hintLabel.textAlignment = .center
         view.addSubview(hintLabel)
-
-        buildBackgroundSelector()
 
         photoSourceButton = makeSourceButton(symbol: "camera.fill", title: "写真を撮影", filled: true, action: #selector(photoSourceTapped))
         videoSourceButton = makeSourceButton(symbol: "video.fill", title: "動画を撮影", filled: false, action: #selector(videoSourceTapped))
@@ -1676,43 +1679,26 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         view.addSubview(videoSourceButton)
         view.addSubview(albumButton)
 
-        // カメラ操作（モード切替／シャッター／前後切替）
-        modeButton = makeCamBarButton(title: "動画", action: #selector(modeTapped))
-        flipButton = makeCamBarButton(title: "切替", action: #selector(flipTapped))
+        // カメラ操作（左端=写真/動画モード切替アイコン、中央=シャッター、右端=前後切替アイコン）
+        modeButton = makeCamIconButton(symbol: "video.fill", action: #selector(modeTapped))
+        flipButton = makeCamIconButton(symbol: "arrow.triangle.2.circlepath.camera.fill", action: #selector(flipTapped))
         view.addSubview(modeButton)
         view.addSubview(flipButton)
         shutterButton = UIButton(type: .custom)
-        shutterButton.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+        shutterButton.backgroundColor = UIColor.black.withAlphaComponent(0.05)
         shutterButton.layer.cornerRadius = 36
-        shutterButton.layer.borderWidth = 4
-        shutterButton.layer.borderColor = UIColor.white.cgColor
-        let inner = UIView(frame: CGRect(x: 9, y: 9, width: 54, height: 54))
-        inner.backgroundColor = .white
-        inner.layer.cornerRadius = 27
+        shutterButton.layer.borderWidth = 3
+        shutterButton.layer.borderColor = UIColor.black.withAlphaComponent(0.85).cgColor
+        let inner = UIView(frame: CGRect(x: 10, y: 10, width: 52, height: 52))
+        inner.backgroundColor = UIColor.black.withAlphaComponent(0.85)
+        inner.layer.cornerRadius = 26
         inner.isUserInteractionEnabled = false
         shutterInner = inner
         shutterButton.addSubview(inner)
         shutterButton.addTarget(self, action: #selector(shutterTapped), for: .touchUpInside)
         view.addSubview(shutterButton)
 
-        var proceedConfig = UIButton.Configuration.filled()
-        proceedConfig.title = "この背景で進む"
-        proceedConfig.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold))
-        proceedConfig.imagePlacement = .trailing
-        proceedConfig.imagePadding = 6
-        proceedConfig.cornerStyle = .medium
-        proceedConfig.baseBackgroundColor = .systemBlue
-        proceedConfig.baseForegroundColor = .white
-        proceedConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 15, weight: .bold)
-            return outgoing
-        }
-        proceedButton = UIButton(configuration: proceedConfig)
-        proceedButton.addTarget(self, action: #selector(proceedTapped), for: .touchUpInside)
-        view.addSubview(proceedButton)
-
-        actionBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+        actionBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialLight))
         changeButton = makeToolButton(symbol: "arrow.uturn.backward", title: "選び直す", action: #selector(changeTapped))
         retakeButton = makeToolButton(symbol: "camera", title: "撮り直す", action: #selector(retakeTapped))
         saveButton = makeToolButton(symbol: "square.and.arrow.down", title: "保存", action: #selector(saveTapped))
@@ -1724,12 +1710,12 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         view.addSubview(actionBar)
 
         busyOverlay = UIView()
-        busyOverlay.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        busyOverlay.backgroundColor = UIColor.white.withAlphaComponent(0.7)
         busyOverlay.isHidden = true
         busySpinner = UIActivityIndicatorView(style: .large)
-        busySpinner.color = .white
+        busySpinner.color = .darkGray
         busyLabel = UILabel()
-        busyLabel.textColor = .white
+        busyLabel.textColor = .black
         busyLabel.font = .systemFont(ofSize: 14, weight: .bold)
         busyLabel.textAlignment = .center
         busyOverlay.addSubview(busySpinner)
@@ -1737,66 +1723,21 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         view.addSubview(busyOverlay)
     }
 
-    private func makeCamBarButton(title: String, action: Selector) -> UIButton {
-        let b = UIButton(type: .system)
-        b.setTitle(title, for: .normal)
-        b.setTitleColor(.white, for: .normal)
-        b.titleLabel?.font = .boldSystemFont(ofSize: 15)
-        b.backgroundColor = UIColor.white.withAlphaComponent(0.12)
-        b.layer.cornerRadius = 18
+    private func makeCamIconButton(symbol: String, action: Selector) -> UIButton {
+        var config = UIButton.Configuration.filled()
+        config.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold))
+        config.cornerStyle = .capsule
+        config.baseBackgroundColor = UIColor.black.withAlphaComponent(0.07)
+        config.baseForegroundColor = .black
+        let b = UIButton(configuration: config)
         b.addTarget(self, action: action, for: .touchUpInside)
         return b
     }
 
-    private func buildBackgroundSelector() {
-        bgScroll = UIScrollView()
-        bgScroll.showsHorizontalScrollIndicator = false
-        bgScroll.clipsToBounds = false
-        view.addSubview(bgScroll)
-        // 先頭はカラーホイール（虹色で常時わかりやすく表示）
-        let wheel = makeBgCircle(tag: wheelTag)
-        let gradient = CAGradientLayer()
-        gradient.type = .conic
-        gradient.colors = [UIColor.red.cgColor, UIColor.orange.cgColor, UIColor.yellow.cgColor, UIColor.green.cgColor, UIColor.blue.cgColor, UIColor.purple.cgColor, UIColor.red.cgColor]
-        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
-        gradient.endPoint = CGPoint(x: 0.5, y: 0)
-        gradient.cornerRadius = 18
-        wheel.layer.insertSublayer(gradient, at: 0)
-        wheelGradient = gradient
-        bgScroll.addSubview(wheel)
-        bgButtons.append(wheel)
-        for (i, color) in presetColors.enumerated() {
-            let b = makeBgCircle(tag: i)
-            b.backgroundColor = color
-            bgScroll.addSubview(b)
-            bgButtons.append(b)
-        }
-        for kind in 0...1 {
-            let b = makeBgCircle(tag: patternTagBase + kind)
-            b.setBackgroundImage(patternImage(kind), for: .normal)
-            bgScroll.addSubview(b)
-            bgButtons.append(b)
-        }
-        refreshBgSelection()
-    }
-
-    private func makeBgCircle(tag: Int) -> UIButton {
-        let b = UIButton(type: .custom)
-        b.tag = tag
-        b.layer.cornerRadius = 18
-        b.layer.borderWidth = 1
-        b.layer.borderColor = UIColor.white.withAlphaComponent(0.18).cgColor
-        b.clipsToBounds = true
-        b.addTarget(self, action: #selector(bgCircleTapped(_:)), for: .touchUpInside)
-        return b
-    }
-
-    private func refreshBgSelection() {
-        for b in bgButtons {
-            let selected = b.tag == selectedBgTag && bgChosenByUser
-            b.layer.borderColor = selected ? UIColor.white.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
-            b.layer.borderWidth = selected ? 2.5 : 1
-        }
+    private func setCamIcon(_ button: UIButton, symbol: String) {
+        var config = button.configuration
+        config?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold))
+        button.configuration = config
     }
 
     private func makeSourceButton(symbol: String, title: String, filled: Bool, action: Selector) -> UIButton {
@@ -1805,8 +1746,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         config.title = title
         config.imagePadding = 8
         config.cornerStyle = .medium
-        config.baseBackgroundColor = filled ? .systemBlue : UIColor.white.withAlphaComponent(0.14)
-        config.baseForegroundColor = .white
+        config.baseBackgroundColor = filled ? .systemBlue : UIColor.black.withAlphaComponent(0.07)
+        config.baseForegroundColor = filled ? .white : .black
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
             outgoing.font = .systemFont(ofSize: 15, weight: .bold)
@@ -1829,7 +1770,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             return outgoing
         }
         let b = UIButton(configuration: config)
-        b.tintColor = emphasized ? .systemBlue : .white
+        b.tintColor = emphasized ? .systemBlue : .black
         b.addTarget(self, action: action, for: .touchUpInside)
         return b
     }
@@ -1845,15 +1786,15 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let bounds = view.bounds
         let safeTop = view.safeAreaInsets.top
         let safeBottom = view.safeAreaInsets.bottom
-        let topH = safeTop + 60
-        let bottomH = safeBottom + (step == 1 ? 280 : 108)
+        let topH = safeTop + 56
+        // 背景行が無くなった分、ステップ1のステージが大きく使える
+        let bottomH = safeBottom + (step == 1 ? 178 : 108)
         let availH = bounds.height - topH - bottomH
-        let stageW = max(200, min(bounds.width - 32, availH * 9 / 16, 430))
+        let stageW = max(200, min(bounds.width - 24, availH * 9 / 16, 460))
         let stageH = stageW * 16 / 9
         let stageX = (bounds.width - stageW) / 2
         let stageY = topH + max(0, (availH - stageH) / 2)
         stageView.frame = CGRect(x: stageX, y: stageY, width: stageW, height: stageH)
-        backgroundView.frame = stageView.bounds
         cameraView.frame = stageView.bounds
         previewLayer?.frame = cameraView.bounds
         overlayView.frame = stageView.bounds
@@ -1862,11 +1803,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         emptyLabel.frame = CGRect(x: (stageW - 250) / 2, y: stageH / 2 + 2, width: 250, height: 26)
         updateMediaFrame()
 
-        titleLabel.frame = CGRect(x: 64, y: safeTop + 10, width: bounds.width - 128, height: 38)
-        closeButton.frame = CGRect(x: 16, y: safeTop + 10, width: 38, height: 38)
+        titleLabel.frame = CGRect(x: 64, y: safeTop + 8, width: bounds.width - 128, height: 38)
+        closeButton.frame = CGRect(x: 16, y: safeTop + 8, width: 38, height: 38)
         hintLabel.frame = CGRect(x: 16, y: stageY + stageH + 8, width: bounds.width - 32, height: 18)
 
-        // ステップ1の下部（下から: アルバム→操作ゾーン→進む→背景の丸）
+        // ステップ1の下部（下から: アルバム→操作ゾーン）
         let albumY = bounds.height - safeBottom - 62
         albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
         let zoneY = albumY - 10 - 76
@@ -1874,21 +1815,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         photoSourceButton.frame = CGRect(x: stageX, y: zoneY + 12, width: halfW, height: 52)
         videoSourceButton.frame = CGRect(x: stageX + halfW + 10, y: zoneY + 12, width: halfW, height: 52)
         shutterButton.frame = CGRect(x: bounds.width / 2 - 36, y: zoneY + 2, width: 72, height: 72)
-        modeButton.frame = CGRect(x: stageX, y: zoneY + 18, width: 86, height: 40)
-        flipButton.frame = CGRect(x: stageX + stageW - 86, y: zoneY + 18, width: 86, height: 40)
-        let proceedY = zoneY - 8 - 46
-        proceedButton.frame = CGRect(x: stageX, y: proceedY, width: stageW, height: 46)
-        let bgY = (bgChosenByUser && !cameraActive ? proceedY : zoneY) - 8 - 44
-        bgScroll.frame = CGRect(x: 0, y: bgY, width: bounds.width, height: 44)
-        var bx: CGFloat = 16
-        for b in bgButtons {
-            b.frame = CGRect(x: bx, y: 4, width: 36, height: 36)
-            bx += 36 + 10
-        }
-        bgScroll.contentSize = CGSize(width: bx + 6, height: 44)
-        if let gradient = wheelGradient, let wheel = bgButtons.first {
-            gradient.frame = wheel.bounds
-        }
+        // 切替アイコンは画面の両端に置く
+        modeButton.frame = CGRect(x: 20, y: zoneY + 12, width: 52, height: 52)
+        flipButton.frame = CGRect(x: bounds.width - 20 - 52, y: zoneY + 12, width: 52, height: 52)
 
         // ステップ2のツールバー
         let actionH: CGFloat = 74 + safeBottom
@@ -1920,6 +1849,12 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         UIView.animate(withDuration: 0.3) {
             self.layoutAll()
         }
+        if s == 2 && mediaKind == .photo {
+            // 完成画像を先に用意しておく（共有・保存をタップ処理の中で描かない）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.refreshFinalCache()
+            }
+        }
     }
 
     private func updateBars() {
@@ -1932,8 +1867,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         flipButton.isHidden = !camUI
         recordTimeLabel.isHidden = !(camUI && !cameraModePhoto)
         albumButton.isHidden = !inStep1
-        bgScroll.isHidden = !inStep1
-        proceedButton.isHidden = !(inStep1 && bgChosenByUser && !cameraActive)
         actionBar.isHidden = inStep1
         cameraView.isHidden = !cameraActive
         emptyIcon.isHidden = mediaKind != .none || cameraActive
@@ -1942,7 +1875,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             if cameraActive {
                 hintLabel.text = cameraModePhoto ? "タップでピント合わせ・シャッターで撮影" : "シャッターで録画開始/停止（最大60秒）"
             } else {
-                hintLabel.text = mediaKind == .background ? "背景が選ばれています" : "写真・動画・背景から選べます"
+                hintLabel.text = "写真・動画から選べます"
             }
         } else if mediaKind == .photo {
             hintLabel.text = "ドラッグ・ピンチで写真の位置を調整できます"
@@ -1952,151 +1885,11 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             hintLabel.text = "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
             retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "video", title: "撮り直す")
-        } else if mediaKind == .background {
-            hintLabel.text = "背景モード"
-            retakeButton.isHidden = true
         }
         layoutToolButtons()
     }
 
-    // MARK: 背景
-    @objc private func bgCircleTapped(_ sender: UIButton) {
-        if isRecording { return }
-        UISelectionFeedbackGenerator().selectionChanged()
-        if cameraActive {
-            cameraActive = false
-            stopCameraSession()
-        }
-        if sender.tag == wheelTag {
-            updateBars()
-            layoutAll()
-            let picker = UIColorPickerViewController()
-            picker.delegate = self
-            picker.selectedColor = customColor
-            picker.supportsAlpha = false
-            present(picker, animated: true)
-            return
-        }
-        selectedBgTag = sender.tag
-        if sender.tag < presetColors.count {
-            background = .color(presetColors[sender.tag])
-        } else {
-            background = .pattern(sender.tag - patternTagBase)
-        }
-        bgChosenByUser = true
-        mediaKind = .background
-        clearMedia()
-        applyBackgroundToStage()
-        refreshBgSelection()
-        updateBars()
-        layoutAll()
-    }
-
-    func colorPickerViewControllerDidSelectColor(_ viewController: UIColorPickerViewController) {
-        customColor = viewController.selectedColor
-    }
-
-    func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
-        background = .color(customColor)
-        selectedBgTag = wheelTag
-        bgChosenByUser = true
-        mediaKind = .background
-        clearMedia()
-        applyBackgroundToStage()
-        refreshBgSelection()
-        updateBars()
-        layoutAll()
-    }
-
-    @objc private func proceedTapped() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        goToStep(2)
-    }
-
-    private func applyBackgroundToStage() {
-        switch background {
-        case .color(let color):
-            backgroundView.image = nil
-            backgroundView.backgroundColor = color
-        case .pattern(let kind):
-            backgroundView.backgroundColor = nil
-            backgroundView.image = patternImage(kind)
-        }
-    }
-
-    private func patternImage(_ kind: Int) -> UIImage {
-        if let cached = patternCache[kind] { return cached }
-        let size = CGSize(width: 1080, height: 1920)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        let image = renderer.image { ctx in
-            let c = ctx.cgContext
-            if kind == 0 {
-                // 幾何学柄1: 三角モザイク
-                UIColor(red: 0.05, green: 0.06, blue: 0.08, alpha: 1).setFill()
-                c.fill(CGRect(origin: .zero, size: size))
-                let cell: CGFloat = 270
-                let tones: [UIColor] = [
-                    UIColor(white: 1, alpha: 0.03),
-                    UIColor(white: 1, alpha: 0.055),
-                    UIColor(white: 1, alpha: 0.085),
-                ]
-                var row = 0
-                for y in stride(from: CGFloat(0), to: size.height, by: cell) {
-                    var col = 0
-                    for x in stride(from: CGFloat(0), to: size.width, by: cell) {
-                        tones[(row * 3 + col) % tones.count].setFill()
-                        let path = CGMutablePath()
-                        if (row + col) % 2 == 0 {
-                            path.move(to: CGPoint(x: x, y: y))
-                            path.addLine(to: CGPoint(x: x + cell, y: y))
-                            path.addLine(to: CGPoint(x: x, y: y + cell))
-                        } else {
-                            path.move(to: CGPoint(x: x + cell, y: y + cell))
-                            path.addLine(to: CGPoint(x: x + cell, y: y))
-                            path.addLine(to: CGPoint(x: x, y: y + cell))
-                        }
-                        path.closeSubpath()
-                        c.addPath(path)
-                        c.fillPath()
-                        col += 1
-                    }
-                    row += 1
-                }
-            } else {
-                // 幾何学柄2: ダイヤ格子
-                UIColor(red: 0.04, green: 0.05, blue: 0.09, alpha: 1).setFill()
-                c.fill(CGRect(origin: .zero, size: size))
-                c.setStrokeColor(UIColor(white: 1, alpha: 0.08).cgColor)
-                c.setLineWidth(3)
-                let step: CGFloat = 150
-                var row = 0
-                for y in stride(from: CGFloat(0), to: size.height + step, by: step) {
-                    let offset: CGFloat = (row % 2 == 0) ? 0 : step / 2
-                    for x in stride(from: -step, to: size.width + step, by: step) {
-                        let cx = x + offset
-                        let path = CGMutablePath()
-                        path.move(to: CGPoint(x: cx, y: y - step / 2))
-                        path.addLine(to: CGPoint(x: cx + step / 2, y: y))
-                        path.addLine(to: CGPoint(x: cx, y: y + step / 2))
-                        path.addLine(to: CGPoint(x: cx - step / 2, y: y))
-                        path.closeSubpath()
-                        c.addPath(path)
-                        c.strokePath()
-                    }
-                    row += 1
-                }
-            }
-        }
-        patternCache[kind] = image
-        return image
-    }
-
     // MARK: 内蔵カメラ
-    private var audioInputAdded = false
-
     @objc private func photoSourceTapped() { activateCamera(photoMode: true) }
     @objc private func videoSourceTapped() { activateCamera(photoMode: false) }
 
@@ -2122,13 +1915,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     private func beginCamera(photoMode: Bool) {
-        if mediaKind == .background {
-            resetBackgroundSelection()
-            mediaKind = .none
-        }
         cameraActive = true
         cameraModePhoto = photoMode
-        modeButton.setTitle(photoMode ? "動画" : "写真", for: .normal)
+        // モード切替ボタンには「切り替え先」のアイコンを出す
+        setCamIcon(modeButton, symbol: photoMode ? "video.fill" : "camera.fill")
         updateBars()
         layoutAll()
         if !photoMode { ensureAudioPermission() }
@@ -2304,7 +2094,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     @objc private func modeTapped() {
         if isRecording { return }
         cameraModePhoto.toggle()
-        modeButton.setTitle(cameraModePhoto ? "動画" : "写真", for: .normal)
+        setCamIcon(modeButton, symbol: cameraModePhoto ? "video.fill" : "camera.fill")
         if !cameraModePhoto { ensureAudioPermission() }
         updateBars()
     }
@@ -2434,9 +2224,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private func updateRecordUI() {
         recordTimeLabel.text = String(format: "%02d:%02d", recordSeconds / 60, recordSeconds % 60)
         recordTimeLabel.textColor = isRecording ? .systemRed : .white
-        shutterInner.backgroundColor = isRecording ? .systemRed : .white
-        shutterInner.layer.cornerRadius = isRecording ? 10 : 27
-        let inset: CGFloat = isRecording ? 20 : 9
+        shutterInner.backgroundColor = isRecording ? .systemRed : UIColor.black.withAlphaComponent(0.85)
+        shutterInner.layer.cornerRadius = isRecording ? 10 : 26
+        let inset: CGFloat = isRecording ? 20 : 10
         shutterInner.frame = CGRect(x: inset, y: inset, width: 72 - inset * 2, height: 72 - inset * 2)
         flipButton.isEnabled = !isRecording
         flipButton.alpha = isRecording ? 0.35 : 1
@@ -2565,6 +2355,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        if gesture.state == .ended || gesture.state == .cancelled {
+            refreshFinalCache()
+            return
+        }
         guard mediaSize() != nil, gesture.state == .changed else { return }
         let t = gesture.translation(in: stageView)
         gesture.setTranslation(.zero, in: stageView)
@@ -2573,6 +2367,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        if gesture.state == .ended || gesture.state == .cancelled {
+            refreshFinalCache()
+            return
+        }
         guard mediaSize() != nil, gesture.state == .changed else { return }
         let ns = viewS * gesture.scale
         gesture.scale = 1
@@ -2608,19 +2406,12 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         player?.replaceCurrentItem(with: nil)
         videoURL = nil
         videoView.isHidden = true
-    }
-
-    private func resetBackgroundSelection() {
-        background = .color(.black)
-        bgChosenByUser = false
-        selectedBgTag = 0
-        refreshBgSelection()
-        applyBackgroundToStage()
+        finalCache = nil
+        cacheGeneration += 1
     }
 
     private func setPhoto(_ image: UIImage) {
         clearMedia()
-        resetBackgroundSelection()
         photo = image
         mediaKind = .photo
         photoView.image = image
@@ -2632,7 +2423,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     private func setVideo(url: URL) {
         clearMedia()
-        resetBackgroundSelection()
         videoURL = url
         mediaKind = .video
         let asset = AVAsset(url: url)
@@ -2677,17 +2467,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     @objc private func changeTapped() {
         clearMedia()
         mediaKind = .none
-        resetBackgroundSelection()
-        cameraActive = false
-        stopCameraSession()
         goToStep(1)
+        activateCamera(photoMode: true)
     }
 
     @objc private func retakeTapped() {
         let wasVideo = mediaKind == .video
         clearMedia()
         mediaKind = .none
-        resetBackgroundSelection()
         goToStep(1)
         activateCamera(photoMode: !wasVideo)
     }
@@ -2732,13 +2519,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         format.opaque = true
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { _ in
-            switch background {
-            case .color(let color):
-                color.setFill()
-                UIRectFill(CGRect(origin: .zero, size: size))
-            case .pattern(let kind):
-                patternImage(kind).draw(in: CGRect(origin: .zero, size: size))
-            }
+            UIColor.black.setFill()
+            UIRectFill(CGRect(origin: .zero, size: size))
             if mediaKind == .photo, let photo = photo {
                 let iw = photo.size.width
                 let ih = photo.size.height
@@ -2748,6 +2530,17 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                 photo.draw(in: CGRect(x: (1080 - dw) / 2 + viewX, y: (1920 - dh) / 2 + viewY, width: dw, height: dh))
             }
             overlay.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    // 完成画像のキャッシュ（ステップ2表示中だけ有効。位置調整が終わるたびに作り直す）
+    private func refreshFinalCache() {
+        guard step == 2, mediaKind == .photo else { return }
+        cacheGeneration += 1
+        let gen = cacheGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, gen == self.cacheGeneration else { return }
+            self.finalCache = self.renderFinal()
         }
     }
 
@@ -2846,20 +2639,31 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
                 guard let self = self else { return }
                 self.exporting = false
                 if let url = url {
-                    self.presentShareSheet(items: [url])
+                    self.deliverShare(items: [url])
                 } else {
                     self.showNotice("動画の書き出しに失敗しました。")
                 }
             }
             return
         }
-        guard let image = renderFinal() else { return }
-        // 写真・背景は v46 で実績のある UIImage のまま渡す
-        presentShareSheet(items: [image])
+        guard let base = finalCache ?? renderFinal() else { return }
+        // 動いていた頃（v46）と同じく、デコード済みの通常画像として渡す
+        var item: Any = base
+        if let data = base.jpegData(compressionQuality: 0.92), let decoded = UIImage(data: data) {
+            item = decoded
+        }
+        deliverShare(items: [item])
     }
 
-    // v46 で実績のある表示手順: メインキューへ回し、最前面の画面から、
-    // ポップオーバーの起点をその画面の中央にして表示する
+    // 本体側に渡して、編集画面を閉じてからシートを出してもらう
+    private func deliverShare(items: [Any]) {
+        if let callback = onShareRequested {
+            callback(items)
+        } else {
+            presentShareSheet(items: items)
+        }
+    }
+
     private func presentShareSheet(items: [Any]) {
         let avc = UIActivityViewController(activityItems: items, applicationActivities: nil)
         DispatchQueue.main.async { [weak self] in
@@ -2888,7 +2692,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             }
             return
         }
-        guard let image = renderFinal() else { return }
+        guard let image = finalCache ?? renderFinal() else { return }
         saving = true
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
