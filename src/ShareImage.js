@@ -392,7 +392,63 @@ export function ShareImageModal({ post, autoPick, onClose }) {
   const [liveError, setLiveError] = useState('');
   const pointersRef = useRef(new Map());
   const lastPinchRef = useRef(null);
+  const imgRef = useRef(null);
+  const viewRef = useRef({ s: 1, x: 0, y: 0 });
+  const edgeRef = useRef({ x: false, y: false, sMin: false, sMax: false, fit: false, lastAt: 0 });
   const model = useMemo(() => buildShareModel(post), [post]);
+
+  // 写真が常に画面を覆う範囲にだけ動かせるよう制限する（黒い余白を作らない）
+  const clampView = (v, image) => {
+    if (!image) return { s: 1, x: 0, y: 0 };
+    const iw = image.videoWidth || image.naturalWidth || image.width;
+    const ih = image.videoHeight || image.naturalHeight || image.height;
+    if (!iw || !ih) return v;
+    const base = Math.max(CW / iw, CH / ih);
+    const s = Math.min(4, Math.max(1, v.s || 1));
+    const dw = iw * base * s;
+    const dh = ih * base * s;
+    const maxX = Math.max(0, (dw - CW) / 2);
+    const maxY = Math.max(0, (dh - CH) / 2);
+    return {
+      s,
+      x: Math.min(maxX, Math.max(-maxX, v.x || 0)),
+      y: Math.min(maxY, Math.max(-maxY, v.y || 0)),
+      _maxX: maxX,
+      _maxY: maxY,
+    };
+  };
+
+  // 枠にカチッとはまった瞬間だけ触覚で知らせる（端への到達・ぴったり収まる状態）
+  const applyView = (raw) => {
+    const c = clampView(raw, imgRef.current);
+    const now = Date.now();
+    const prev = edgeRef.current;
+    const EPS = 0.5;
+    const state = {
+      x: c._maxX !== undefined && Math.abs(Math.abs(c.x) - c._maxX) < EPS && c._maxX > 0,
+      y: c._maxY !== undefined && Math.abs(Math.abs(c.y) - c._maxY) < EPS && c._maxY > 0,
+      sMin: c.s <= 1,
+      sMax: c.s >= 4,
+      fit: c.s === 1 && c.x === 0 && c.y === 0,
+    };
+    const hitEdge = (state.x && !prev.x) || (state.y && !prev.y) || (state.sMax && !prev.sMax);
+    const hitFit = state.fit && !prev.fit;
+    if ((hitEdge || hitFit) && now - prev.lastAt > 90) {
+      triggerHaptic(hitFit ? 'light' : 'selection');
+      edgeRef.current = { ...state, lastAt: now };
+    } else {
+      edgeRef.current = { ...state, lastAt: prev.lastAt };
+    }
+    const next = { s: c.s, x: c.x, y: c.y };
+    viewRef.current = next;
+    setView(next);
+  };
+
+  const setPhoto = (image) => {
+    imgRef.current = image;
+    setImg(image);
+    applyView({ s: 1, x: 0, y: 0 });
+  };
 
   const stopStream = () => {
     if (streamRef.current) {
@@ -512,7 +568,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     if (!file) return;
     const url = URL.createObjectURL(file);
     const image = new Image();
-    image.onload = () => { setImg(image); setView({ s: 1, x: 0, y: 0 }); };
+    image.onload = () => setPhoto(image);
     image.src = url;
   };
 
@@ -547,7 +603,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       const image = new Image();
-      image.onload = () => { setImg(image); setView({ s: 1, x: 0, y: 0 }); stopLive(); };
+      image.onload = () => { setPhoto(image); stopLive(); };
       image.src = url;
     }, 'image/jpeg', 0.92);
   };
@@ -568,13 +624,13 @@ export function ShareImageModal({ post, autoPick, onClose }) {
     const rect = canvas.getBoundingClientRect();
     const toCanvas = CW / rect.width;
     if (pointersRef.current.size === 1) {
-      setView((v) => ({ ...v, x: v.x + dx * toCanvas, y: v.y + dy * toCanvas }));
+      applyView({ ...viewRef.current, x: viewRef.current.x + dx * toCanvas, y: viewRef.current.y + dy * toCanvas });
     } else if (pointersRef.current.size === 2) {
       const pts = [...pointersRef.current.values()];
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       if (lastPinchRef.current) {
         const ratio = dist / lastPinchRef.current;
-        setView((v) => ({ ...v, s: Math.min(4, Math.max(1, v.s * ratio)) }));
+        applyView({ ...viewRef.current, s: viewRef.current.s * ratio });
       }
       lastPinchRef.current = dist;
     }
@@ -710,7 +766,7 @@ export function ShareImageModal({ post, autoPick, onClose }) {
           <div className="max-w-[430px] mx-auto">
             <p className="text-center text-xs text-white/60 mb-3">写真はドラッグ移動・ピンチ拡大で位置を調整できます</p>
             <div className="grid grid-cols-3 gap-3">
-              <button onClick={() => { setImg(null); setView({ s: 1, x: 0, y: 0 }); }} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
+              <button onClick={() => { imgRef.current = null; viewRef.current = { s: 1, x: 0, y: 0 }; setImg(null); setView({ s: 1, x: 0, y: 0 }); }} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
                 <RotateCcw size={16} /> 写真を変更
               </button>
               <button onClick={() => openCamera('environment')} className="flex items-center justify-center gap-1.5 bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform text-sm">
