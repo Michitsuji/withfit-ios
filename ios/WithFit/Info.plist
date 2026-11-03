@@ -35,6 +35,8 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>プロフィールアイコンやシェア画像用の写真を撮影するためにカメラを使用します。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>シェア動画の撮影で音声を録音するためにマイクを使用します。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>プロフィールアイコン用の画像を選択するために写真ライブラリを使用します。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

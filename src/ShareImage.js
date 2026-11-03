@@ -265,6 +265,8 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
 
   columns.forEach((lines, ci) => {
     const colX = MX + ci * (colW + gapX);
+    // 2列以上のときは右端の列を右詰めにする
+    const rightAlign = nCols >= 2 && ci === nCols - 1;
     lines.forEach((ln) => {
       const y = topY + ln.y;
       if (ln.kind === 'header') {
@@ -273,23 +275,13 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
         let t = ln.text;
         while (t.length > 1 && ctx.measureText(t).width > colW) t = t.slice(0, -1);
         if (t !== ln.text) t = t.slice(0, -1) + '…';
-        ctx.fillText(t, colX, y);
+        ctx.fillText(t, rightAlign ? colX + colW - ctx.measureText(t).width : colX, y);
       } else if (ln.kind === 'sub') {
         ctx.font = `700 ${20 * k}px ${FONT}`;
         ctx.fillStyle = COL.blue;
-        ctx.fillText(ln.row.text, colX + 4, y + 4 * k);
+        ctx.fillText(ln.row.text, rightAlign ? colX + colW - ctx.measureText(ln.row.text).width : colX + 4, y + 4 * k);
       } else if (ln.kind === 'row') {
         const row = ln.row;
-        let x = colX + row.indent * 30 * k;
-        ctx.font = `700 ${20 * k}px ${FONT}`;
-        if (row.arrow) {
-          drawArrow(x, y + 5 * k);
-          ctx.fillStyle = row.labelColor;
-          ctx.fillText(row.label, x + 26 * k, y + 3 * k);
-        } else {
-          ctx.fillStyle = row.labelColor;
-          ctx.fillText(row.label, x, y + 3 * k);
-        }
         // セグメント（列幅に収まらない場合は行だけ縮小）
         const numPx = 24 * k;
         const unitPx = 16 * k;
@@ -298,15 +290,44 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
         row.segs.forEach((seg) => { ctx.font = segFont(seg); totalW += ctx.measureText(seg.t).width; });
         const avail = colW - 150 * k;
         const shrink = totalW > avail ? Math.max(0.78, avail / totalW) : 1;
-        let sx = colX + 150 * k;
-        row.segs.forEach((seg) => {
-          const base = seg.kind === 'num' ? numPx : seg.kind === 'cross' ? 19 * k : unitPx;
-          ctx.font = `700 ${base * shrink}px ${FONT}`;
-          ctx.fillStyle = seg.color || (seg.kind === 'num' ? COL.white : COL.gray);
-          const yOff = seg.kind === 'num' ? 0 : (numPx - unitPx) * shrink * 0.9;
-          ctx.fillText(seg.t, sx, y + yOff);
-          sx += ctx.measureText(seg.t).width;
-        });
+        const segsW = totalW * shrink;
+        const drawSegsFrom = (sx0) => {
+          let sx = sx0;
+          row.segs.forEach((seg) => {
+            const base = seg.kind === 'num' ? numPx : seg.kind === 'cross' ? 19 * k : unitPx;
+            ctx.font = `700 ${base * shrink}px ${FONT}`;
+            ctx.fillStyle = seg.color || (seg.kind === 'num' ? COL.white : COL.gray);
+            const yOff = seg.kind === 'num' ? 0 : (numPx - unitPx) * shrink * 0.9;
+            ctx.fillText(seg.t, sx, y + yOff);
+            sx += ctx.measureText(seg.t).width;
+          });
+        };
+        ctx.font = `700 ${20 * k}px ${FONT}`;
+        ctx.fillStyle = row.labelColor;
+        if (rightAlign) {
+          // 行全体を右端（インデント分は内側へ）に寄せ、ラベル→値の順で描く
+          const endX = colX + colW - row.indent * 30 * k;
+          const segsX = endX - segsW;
+          const labelW = ctx.measureText(row.label).width;
+          const labelBlockW = (row.arrow ? 26 * k : 0) + labelW;
+          const labelX = Math.max(colX, segsX - 16 * k - labelBlockW);
+          if (row.arrow) {
+            drawArrow(labelX, y + 5 * k);
+            ctx.fillText(row.label, labelX + 26 * k, y + 3 * k);
+          } else {
+            ctx.fillText(row.label, labelX, y + 3 * k);
+          }
+          drawSegsFrom(segsX);
+        } else {
+          const x = colX + row.indent * 30 * k;
+          if (row.arrow) {
+            drawArrow(x, y + 5 * k);
+            ctx.fillText(row.label, x + 26 * k, y + 3 * k);
+          } else {
+            ctx.fillText(row.label, x, y + 3 * k);
+          }
+          drawSegsFrom(colX + 150 * k);
+        }
       }
     });
   });
