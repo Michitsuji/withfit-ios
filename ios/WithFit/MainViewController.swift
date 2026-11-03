@@ -1437,13 +1437,16 @@ final class ShareCameraViewController: UIViewController, AVCaptureVideoDataOutpu
 }
 
 // MARK: - Share Editor (シェア画像・動画の編集画面: 全面Swift)
-// 写真/動画の選択・撮影・位置調整・背景選択・合成・保存・共有をすべてネイティブで行う。
+// 2段階UI: ステップ1=作成方法の選択（写真/動画/アルバム/背景）、ステップ2=編集・保存・共有。
 // 記録部分の描画は Web 側で作った透明PNG（overlayImage）を重ねるだけ。
+// 注意: 画像生成は必ず format.scale = 1（等倍）で行う。デフォルトは画面の倍率（3倍）に
+// なってしまい、3240x5760の巨大画像ができて共有・保存が固まる原因になる。
 final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIColorPickerViewControllerDelegate, UIGestureRecognizerDelegate {
     var overlayImage: UIImage?
     var autoOpen: String = "none"
 
     private enum MediaKind { case none, photo, video, background }
+    private var step: Int = 1
     private var mediaKind: MediaKind = .none
     private var photo: UIImage?
     private var videoURL: URL?
@@ -1454,7 +1457,9 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     private enum BackgroundKind { case color(UIColor), pattern(Int) }
     private var background: BackgroundKind = .color(.black)
+    private var bgChosenByUser = false
     private var customColor: UIColor = UIColor(red: 0.1, green: 0.35, blue: 0.75, alpha: 1)
+    private var selectedBgTag: Int = 0
 
     private var viewS: CGFloat = 1
     private var viewX: CGFloat = 0
@@ -1473,6 +1478,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var photoSourceButton: UIButton!
     private var videoSourceButton: UIButton!
     private var albumButton: UIButton!
+    private var proceedButton: UIButton!
     private var actionBar: UIVisualEffectView!
     private var changeButton: UIButton!
     private var retakeButton: UIButton!
@@ -1480,7 +1486,6 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var shareButton: UIButton!
     private var bgScroll: UIScrollView!
     private var bgButtons: [UIButton] = []
-    private var selectedBgTag: Int = 0
     private var wheelGradient: CAGradientLayer?
     private var busyOverlay: UIView!
     private var busyLabel: UILabel!
@@ -1495,16 +1500,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private var exportTimer: Timer?
     private var patternCache: [Int: UIImage] = [:]
 
-    // 背景プリセット（文字が読めるよう暗めの色のみ）
+    // 単色プリセットは3色（黒・ネイビー・ワイン）
     private let presetColors: [UIColor] = [
         .black,
-        UIColor(red: 0.15, green: 0.15, blue: 0.17, alpha: 1),
         UIColor(red: 0.08, green: 0.13, blue: 0.24, alpha: 1),
         UIColor(red: 0.29, green: 0.08, blue: 0.13, alpha: 1),
-        UIColor(red: 0.07, green: 0.20, blue: 0.19, alpha: 1),
-        UIColor(red: 0.18, green: 0.12, blue: 0.10, alpha: 1),
-        UIColor(red: 0.14, green: 0.10, blue: 0.25, alpha: 1),
     ]
+    private let wheelTag = 100
+    private let patternTagBase = 10
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1578,7 +1581,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         emptyIcon.tintColor = UIColor.white.withAlphaComponent(0.18)
         emptyIcon.contentMode = .center
         stageView.addSubview(emptyIcon)
-        emptyLabel.text = "まずは写真・動画を選んでください"
+        emptyLabel.text = "まずは写真・動画・背景を選んでください"
         emptyLabel.textColor = UIColor.white.withAlphaComponent(0.45)
         emptyLabel.font = .systemFont(ofSize: 13, weight: .medium)
         emptyLabel.textAlignment = .center
@@ -1613,8 +1616,25 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         view.addSubview(videoSourceButton)
         view.addSubview(albumButton)
 
+        var proceedConfig = UIButton.Configuration.filled()
+        proceedConfig.title = "この背景で進む"
+        proceedConfig.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold))
+        proceedConfig.imagePlacement = .trailing
+        proceedConfig.imagePadding = 6
+        proceedConfig.cornerStyle = .medium
+        proceedConfig.baseBackgroundColor = .systemBlue
+        proceedConfig.baseForegroundColor = .white
+        proceedConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 15, weight: .bold)
+            return outgoing
+        }
+        proceedButton = UIButton(configuration: proceedConfig)
+        proceedButton.addTarget(self, action: #selector(proceedTapped), for: .touchUpInside)
+        view.addSubview(proceedButton)
+
         actionBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
-        changeButton = makeToolButton(symbol: "photo.on.rectangle", title: "変更", action: #selector(changeTapped))
+        changeButton = makeToolButton(symbol: "arrow.uturn.backward", title: "選び直す", action: #selector(changeTapped))
         retakeButton = makeToolButton(symbol: "camera", title: "撮り直す", action: #selector(retakeTapped))
         saveButton = makeToolButton(symbol: "square.and.arrow.down", title: "保存", action: #selector(saveTapped))
         shareButton = makeToolButton(symbol: "square.and.arrow.up", title: "共有する", action: #selector(shareTapped), emphasized: true)
@@ -1643,23 +1663,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         bgScroll.showsHorizontalScrollIndicator = false
         bgScroll.clipsToBounds = false
         view.addSubview(bgScroll)
-        var tag = 0
-        for color in presetColors {
-            let b = makeBgCircle(tag: tag)
-            b.backgroundColor = color
-            bgScroll.addSubview(b)
-            bgButtons.append(b)
-            tag += 1
-        }
-        for kind in 0...1 {
-            let b = makeBgCircle(tag: tag)
-            b.setBackgroundImage(patternImage(kind), for: .normal)
-            bgScroll.addSubview(b)
-            bgButtons.append(b)
-            tag += 1
-        }
-        // カラーホイール
-        let wheel = makeBgCircle(tag: tag)
+        // 先頭はカラーホイール（虹色で常時わかりやすく表示）
+        let wheel = makeBgCircle(tag: wheelTag)
         let gradient = CAGradientLayer()
         gradient.type = .conic
         gradient.colors = [UIColor.red.cgColor, UIColor.orange.cgColor, UIColor.yellow.cgColor, UIColor.green.cgColor, UIColor.blue.cgColor, UIColor.purple.cgColor, UIColor.red.cgColor]
@@ -1670,6 +1675,18 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         wheelGradient = gradient
         bgScroll.addSubview(wheel)
         bgButtons.append(wheel)
+        for (i, color) in presetColors.enumerated() {
+            let b = makeBgCircle(tag: i)
+            b.backgroundColor = color
+            bgScroll.addSubview(b)
+            bgButtons.append(b)
+        }
+        for kind in 0...1 {
+            let b = makeBgCircle(tag: patternTagBase + kind)
+            b.setBackgroundImage(patternImage(kind), for: .normal)
+            bgScroll.addSubview(b)
+            bgButtons.append(b)
+        }
         refreshBgSelection()
     }
 
@@ -1686,7 +1703,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     private func refreshBgSelection() {
         for b in bgButtons {
-            let selected = b.tag == selectedBgTag
+            let selected = b.tag == selectedBgTag && bgChosenByUser
             b.layer.borderColor = selected ? UIColor.white.cgColor : UIColor.white.withAlphaComponent(0.18).cgColor
             b.layer.borderWidth = selected ? 2.5 : 1
         }
@@ -1739,7 +1756,8 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let safeTop = view.safeAreaInsets.top
         let safeBottom = view.safeAreaInsets.bottom
         let topH = safeTop + 60
-        let bottomH = safeBottom + 214
+        // ステップ1は下部UIが多いので広く、ステップ2は狭く確保（ステージが広がる）
+        let bottomH = safeBottom + (step == 1 ? 268 : 108)
         let availH = bounds.height - topH - bottomH
         let stageW = max(200, min(bounds.width - 32, availH * 9 / 16, 430))
         let stageH = stageW * 16 / 9
@@ -1756,7 +1774,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         closeButton.frame = CGRect(x: 16, y: safeTop + 10, width: 38, height: 38)
         hintLabel.frame = CGRect(x: 16, y: stageY + stageH + 8, width: bounds.width - 32, height: 18)
 
-        // 背景セレクタ行
+        // ステップ1の下部（背景の丸→進む→撮影ボタン2つ→アルバム）
         let bgY = stageY + stageH + 32
         bgScroll.frame = CGRect(x: 0, y: bgY, width: bounds.width, height: 44)
         var bx: CGFloat = 16
@@ -1765,77 +1783,75 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             bx += 36 + 10
         }
         bgScroll.contentSize = CGSize(width: bx + 6, height: 44)
-        if let gradient = wheelGradient, let wheel = bgButtons.last {
+        if let gradient = wheelGradient, let wheel = bgButtons.first {
             gradient.frame = wheel.bounds
         }
-
-        // 入口ボタン（2段）
+        proceedButton.frame = CGRect(x: stageX, y: bgY + 50, width: stageW, height: 46)
         let albumY = bounds.height - safeBottom - 62
         albumButton.frame = CGRect(x: stageX, y: albumY, width: stageW, height: 52)
         let halfW = (stageW - 10) / 2
         photoSourceButton.frame = CGRect(x: stageX, y: albumY - 62, width: halfW, height: 52)
         videoSourceButton.frame = CGRect(x: stageX + halfW + 10, y: albumY - 62, width: halfW, height: 52)
 
+        // ステップ2のツールバー
         let actionH: CGFloat = 74 + safeBottom
         actionBar.frame = CGRect(x: 0, y: bounds.height - actionH, width: bounds.width, height: actionH)
-        let itemW = bounds.width / 4
-        changeButton.frame = CGRect(x: 0, y: 4, width: itemW, height: 64)
-        retakeButton.frame = CGRect(x: itemW, y: 4, width: itemW, height: 64)
-        saveButton.frame = CGRect(x: itemW * 2, y: 4, width: itemW, height: 64)
-        shareButton.frame = CGRect(x: itemW * 3, y: 4, width: itemW, height: 64)
+        layoutToolButtons()
 
         busyOverlay.frame = view.bounds
         busySpinner.center = CGPoint(x: bounds.width / 2, y: bounds.height / 2 - 16)
         busyLabel.frame = CGRect(x: 16, y: bounds.height / 2 + 16, width: bounds.width - 32, height: 22)
     }
 
+    private func layoutToolButtons() {
+        let buttons: [UIButton] = [changeButton, retakeButton, saveButton, shareButton].filter { !$0.isHidden }
+        guard !buttons.isEmpty else { return }
+        let w = view.bounds.width / CGFloat(buttons.count)
+        for (i, b) in buttons.enumerated() {
+            b.frame = CGRect(x: w * CGFloat(i), y: 4, width: w, height: 64)
+        }
+    }
+
+    private func goToStep(_ s: Int) {
+        step = s
+        titleLabel.text = s == 1 ? "シェア画像を作成" : "編集・共有"
+        updateBars()
+        UIView.animate(withDuration: 0.3) {
+            self.layoutAll()
+        }
+    }
+
     private func updateBars() {
-        let hasMedia = mediaKind == .photo || mediaKind == .video
-        let isBackground = mediaKind == .background
-        photoSourceButton.isHidden = hasMedia || isBackground
-        videoSourceButton.isHidden = hasMedia || isBackground
-        albumButton.isHidden = hasMedia || isBackground
-        actionBar.isHidden = !(hasMedia || isBackground)
+        let inStep1 = step == 1
+        photoSourceButton.isHidden = !inStep1
+        videoSourceButton.isHidden = !inStep1
+        albumButton.isHidden = !inStep1
+        bgScroll.isHidden = !inStep1
+        proceedButton.isHidden = !(inStep1 && bgChosenByUser)
+        actionBar.isHidden = inStep1
         emptyIcon.isHidden = mediaKind != .none
         emptyLabel.isHidden = mediaKind != .none
-        if mediaKind == .photo {
+        if inStep1 {
+            hintLabel.text = mediaKind == .background ? "背景が選ばれています" : "写真・動画・背景から選べます"
+        } else if mediaKind == .photo {
             hintLabel.text = "ドラッグ・ピンチで写真の位置を調整できます"
-            setToolButton(changeButton, symbol: "photo.on.rectangle", title: "写真を変更")
+            retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "camera", title: "撮り直す")
         } else if mediaKind == .video {
-            hintLabel.text = "ドラッグ・ピンチで動画の位置を調整できます（タップで再生/停止）"
-            setToolButton(changeButton, symbol: "photo.on.rectangle", title: "変更")
+            hintLabel.text = "ドラッグ・ピンチで位置を調整（タップで再生/停止）"
+            retakeButton.isHidden = false
             setToolButton(retakeButton, symbol: "video", title: "撮り直す")
-        } else if isBackground {
-            hintLabel.text = "背景モード（もう一度同じ丸を押すと解除）"
-            setToolButton(changeButton, symbol: "camera.fill", title: "写真を撮影")
-            setToolButton(retakeButton, symbol: "photo.on.rectangle", title: "アルバム")
-        } else {
-            hintLabel.text = ""
+        } else if mediaKind == .background {
+            hintLabel.text = "背景モード"
+            retakeButton.isHidden = true
         }
+        layoutToolButtons()
     }
 
     // MARK: 背景
     @objc private func bgCircleTapped(_ sender: UIButton) {
         UISelectionFeedbackGenerator().selectionChanged()
-        let colorCount = presetColors.count
-        if sender.tag == selectedBgTag && mediaKind == .background {
-            // 同じ丸をもう一度押したら背景モード解除
-            mediaKind = .none
-            background = .color(.black)
-            selectedBgTag = 0
-            applyBackgroundToStage()
-            refreshBgSelection()
-            updateBars()
-            return
-        }
-        selectedBgTag = sender.tag
-        if sender.tag < colorCount {
-            background = .color(presetColors[sender.tag])
-        } else if sender.tag < colorCount + 2 {
-            background = .pattern(sender.tag - colorCount)
-        } else {
-            // カラーホイールを開く（選択済みの場合は色変更として開く）
+        if sender.tag == wheelTag {
             let picker = UIColorPickerViewController()
             picker.delegate = self
             picker.selectedColor = customColor
@@ -1843,12 +1859,15 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             present(picker, animated: true)
             return
         }
-        setBackgroundMode()
-    }
-
-    private func setBackgroundMode() {
-        clearMedia()
+        selectedBgTag = sender.tag
+        if sender.tag < presetColors.count {
+            background = .color(presetColors[sender.tag])
+        } else {
+            background = .pattern(sender.tag - patternTagBase)
+        }
+        bgChosenByUser = true
         mediaKind = .background
+        clearMedia()
         applyBackgroundToStage()
         refreshBgSelection()
         updateBars()
@@ -1860,12 +1879,18 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
 
     func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
         background = .color(customColor)
-        selectedBgTag = presetColors.count + 2
-        if let wheel = bgButtons.last {
-            wheel.backgroundColor = customColor
-            wheelGradient?.isHidden = true
-        }
-        setBackgroundMode()
+        selectedBgTag = wheelTag
+        bgChosenByUser = true
+        mediaKind = .background
+        clearMedia()
+        applyBackgroundToStage()
+        refreshBgSelection()
+        updateBars()
+    }
+
+    @objc private func proceedTapped() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        goToStep(2)
     }
 
     private func applyBackgroundToStage() {
@@ -1882,7 +1907,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     private func patternImage(_ kind: Int) -> UIImage {
         if let cached = patternCache[kind] { return cached }
         let size = CGSize(width: 1080, height: 1920)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let image = renderer.image { ctx in
             let c = ctx.cgContext
             if kind == 0 {
@@ -2058,27 +2086,29 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         videoView.isHidden = true
     }
 
-    private func setPhoto(_ image: UIImage) {
-        clearMedia()
+    private func resetBackgroundSelection() {
         background = .color(.black)
+        bgChosenByUser = false
         selectedBgTag = 0
         refreshBgSelection()
         applyBackgroundToStage()
+    }
+
+    private func setPhoto(_ image: UIImage) {
+        clearMedia()
+        resetBackgroundSelection()
         photo = image
         mediaKind = .photo
         photoView.image = image
         photoView.isHidden = false
         edgeState = (x: false, y: false, sMax: false, fit: true)
         applyView(s: 1, x: 0, y: 0)
-        updateBars()
+        goToStep(2)
     }
 
     private func setVideo(url: URL) {
         clearMedia()
-        background = .color(.black)
-        selectedBgTag = 0
-        refreshBgSelection()
-        applyBackgroundToStage()
+        resetBackgroundSelection()
         videoURL = url
         mediaKind = .video
         let asset = AVAsset(url: url)
@@ -2106,7 +2136,7 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         edgeState = (x: false, y: false, sMax: false, fit: true)
         applyView(s: 1, x: 0, y: 0)
         player?.play()
-        updateBars()
+        goToStep(2)
     }
 
     @objc private func openPhotoCameraTapped() { openPhotoCamera() }
@@ -2114,18 +2144,16 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
     @objc private func openPickerTapped() { openPicker() }
 
     @objc private func changeTapped() {
-        if mediaKind == .background {
-            openPhotoCamera()
-        } else {
-            openPicker()
-        }
+        // ステップ1に戻って素材を選び直す
+        clearMedia()
+        mediaKind = .none
+        resetBackgroundSelection()
+        goToStep(1)
     }
 
     @objc private func retakeTapped() {
         if mediaKind == .video {
             openVideoCamera()
-        } else if mediaKind == .background {
-            openPicker()
         } else {
             openPhotoCamera()
         }
@@ -2190,11 +2218,14 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         }
     }
 
-    // MARK: 合成（静止画）
+    // MARK: 合成（静止画）※必ず等倍（scale=1）で描く
     private func renderFinal() -> UIImage? {
         guard let overlay = overlayImage else { return nil }
         let size = CGSize(width: 1080, height: 1920)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { _ in
             switch background {
             case .color(let color):
@@ -2240,17 +2271,10 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        // 向きの正規化→編集画面の配置（拡大・移動）までを1つの変換にまとめる
         let t = track.preferredTransform
         let uprightRect = CGRect(origin: .zero, size: track.naturalSize).applying(t)
         let fixed = t.concatenating(CGAffineTransform(translationX: -uprightRect.minX, y: -uprightRect.minY))
-        layerInstruction.setTransform(fixed, at: .zero)
-        instruction.layerInstructions = [layerInstruction]
-        comp.instructions = [instruction]
-
-        let parentLayer = CALayer()
-        let videoLayer = CALayer()
-        let overlayLayer = CALayer()
-        parentLayer.frame = CGRect(origin: .zero, size: renderSize)
         let iw = videoDisplaySize.width
         let ih = videoDisplaySize.height
         let base = max(1080 / iw, 1920 / ih)
@@ -2258,7 +2282,20 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
         let dh = ih * base * viewS
         let dx = (1080 - dw) / 2 + viewX
         let dyTop = (1920 - dh) / 2 + viewY
-        videoLayer.frame = CGRect(x: dx, y: 1920 - dyTop - dh, width: dw, height: dh)
+        let k = dw / max(1, iw)
+        let final = fixed
+            .concatenating(CGAffineTransform(scaleX: k, y: k))
+            .concatenating(CGAffineTransform(translationX: dx, y: dyTop))
+        layerInstruction.setTransform(final, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        comp.instructions = [instruction]
+
+        // 記録オーバーレイだけをアニメーションツールで重ねる（映像レイヤーは全面）
+        let parentLayer = CALayer()
+        let videoLayer = CALayer()
+        let overlayLayer = CALayer()
+        parentLayer.frame = CGRect(origin: .zero, size: renderSize)
+        videoLayer.frame = CGRect(origin: .zero, size: renderSize)
         overlayLayer.frame = CGRect(origin: .zero, size: renderSize)
         overlayLayer.contents = overlay.cgImage
         parentLayer.addSublayer(videoLayer)
@@ -2311,27 +2348,15 @@ final class ShareEditorViewController: UIViewController, PHPickerViewControllerD
             }
             return
         }
-        // 静止画はバックグラウンドで描画してからファイル経由で共有する
-        setBusy(true, text: "準備中…")
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let image = self.renderFinal()
-            var fileURL: URL? = nil
-            if let image = image, let data = image.jpegData(compressionQuality: 0.92) {
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("withfit_share_\(Int(Date().timeIntervalSince1970)).jpg")
-                if (try? data.write(to: url)) != nil {
-                    fileURL = url
-                }
-            }
-            DispatchQueue.main.async {
-                self.setBusy(false, text: "")
-                if let fileURL = fileURL {
-                    self.presentShareSheet(items: [fileURL])
-                } else if let image = image {
-                    self.presentShareSheet(items: [image])
-                }
+        guard let image = renderFinal() else { return }
+        if let data = image.jpegData(compressionQuality: 0.92) {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("withfit_share_\(Int(Date().timeIntervalSince1970)).jpg")
+            if (try? data.write(to: url)) != nil {
+                presentShareSheet(items: [url])
+                return
             }
         }
+        presentShareSheet(items: [image])
     }
 
     private func presentShareSheet(items: [Any]) {
