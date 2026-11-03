@@ -5,6 +5,7 @@ import AuthenticationServices
 import CryptoKit
 import AVFoundation
 import Photos
+import PhotosUI
 
 final class MainViewController: UITabBarController, UITabBarControllerDelegate, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
 
@@ -370,8 +371,10 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 let vc = ShareCameraViewController()
                 vc.overlayImage = overlay
                 vc.modalPresentationStyle = .fullScreen
-                vc.onCaptured = { [weak self] jpegBase64 in
-                    self?.sendToWeb(payload: ["type": "SHARE_CAMERA_RESULT", "image": jpegBase64])
+                vc.onCapturedImage = { [weak self] image in
+                    if let b64 = image.jpegData(compressionQuality: 0.92)?.base64EncodedString() {
+                        self?.sendToWeb(payload: ["type": "SHARE_CAMERA_RESULT", "image": b64])
+                    }
                 }
                 vc.onCancelled = { [weak self] in
                     self?.sendToWeb(payload: ["type": "SHARE_CAMERA_RESULT", "cancelled": true])
@@ -382,6 +385,24 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
                 var topVC: UIViewController = self
                 while let presented = topVC.presentedViewController { topVC = presented }
                 topVC.present(vc, animated: true)
+            }
+
+        case "OPEN_SHARE_EDITOR":
+            // シェア画像の編集画面（全面Swift）を開く。
+            // overlay は記録部分だけを描いた透明PNG（1080x1920）。
+            guard let b64 = payload["overlay"] as? String,
+                  let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
+                  let overlay = UIImage(data: data) else { break }
+            let autoOpen = payload["autoOpen"] as? String ?? "none"
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let editor = ShareEditorViewController()
+                editor.overlayImage = overlay
+                editor.autoOpen = autoOpen
+                editor.modalPresentationStyle = .fullScreen
+                var topVC: UIViewController = self
+                while let presented = topVC.presentedViewController { topVC = presented }
+                topVC.present(editor, animated: true)
             }
 
         case "SAVE_IMAGE":
@@ -922,7 +943,7 @@ extension MainViewController: ASAuthorizationControllerDelegate, ASAuthorization
 // MARK: - Share Camera (ネイティブのライブカメラ: コラージュを重ねたまま撮影する)
 final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDelegate {
     var overlayImage: UIImage?
-    var onCaptured: ((String) -> Void)?
+    var onCapturedImage: ((UIImage) -> Void)?
     var onCancelled: (() -> Void)?
     var onError: ((String) -> Void)?
 
@@ -1160,16 +1181,11 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
             let dh = ih * scale
             image.draw(in: CGRect(x: (target.width - dw) / 2, y: (target.height - dh) / 2, width: dw, height: dh))
         }
-        guard let jpeg = composed.jpegData(compressionQuality: 0.92) else {
-            finishWithError("画像の変換に失敗しました。")
-            return
-        }
-        let b64 = jpeg.base64EncodedString()
         DispatchQueue.main.async { [weak self] in
             guard let self = self, !self.finished else { return }
             self.finished = true
             self.stopSession()
-            self.dismiss(animated: true) { self.onCaptured?(b64) }
+            self.dismiss(animated: true) { self.onCapturedImage?(composed) }
         }
     }
 
@@ -1195,5 +1211,425 @@ final class ShareCameraViewController: UIViewController, AVCapturePhotoCaptureDe
                 self?.session.stopRunning()
             }
         }
+    }
+}
+
+// MARK: - Share Editor (シェア画像の編集画面: 全面Swift)
+// 写真の選択・撮影・位置調整・合成・保存・共有をすべてネイティブで行う。
+// 記録部分の描画は Web 側で作った透明PNG（overlayImage）を重ねるだけ。
+final class ShareEditorViewController: UIViewController, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
+    var overlayImage: UIImage?
+    var autoOpen: String = "none"
+
+    private var photo: UIImage?
+    private var viewS: CGFloat = 1
+    private var viewX: CGFloat = 0
+    private var viewY: CGFloat = 0
+
+    private let stageView = UIView()
+    private let photoView = UIImageView()
+    private let overlayView = UIImageView()
+    private let emptyIcon = UIImageView()
+    private let emptyLabel = UILabel()
+    private let hintLabel = UILabel()
+    private var closeButton: UIButton!
+    private var titleLabel: UILabel!
+    private var cameraSourceButton: UIButton!
+    private var albumSourceButton: UIButton!
+    private var actionBar: UIVisualEffectView!
+    private var changeButton: UIButton!
+    private var retakeButton: UIButton!
+    private var saveButton: UIButton!
+    private var shareButton: UIButton!
+
+    private let edgeFeedback = UISelectionFeedbackGenerator()
+    private var edgeState = (x: false, y: false, sMax: false, fit: true)
+    private var lastHapticAt: TimeInterval = 0
+    private var didAutoOpen = false
+    private var saving = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        buildUI()
+        updateBars()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutAll()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !didAutoOpen {
+            didAutoOpen = true
+            if autoOpen == "camera" {
+                openCamera()
+            } else if autoOpen == "album" {
+                openPicker()
+            }
+        }
+    }
+
+    // MARK: UI構築
+    private func buildUI() {
+        // ヘッダー
+        titleLabel = UILabel()
+        titleLabel.text = "シェア画像を作成"
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
+        titleLabel.textAlignment = .center
+        view.addSubview(titleLabel)
+
+        var closeConfig = UIButton.Configuration.filled()
+        closeConfig.image = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold))
+        closeConfig.cornerStyle = .capsule
+        closeConfig.baseBackgroundColor = UIColor.white.withAlphaComponent(0.12)
+        closeConfig.baseForegroundColor = .white
+        closeButton = UIButton(configuration: closeConfig)
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        view.addSubview(closeButton)
+
+        // ステージ
+        stageView.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+        stageView.clipsToBounds = true
+        stageView.layer.cornerRadius = 20
+        stageView.layer.borderWidth = 1
+        stageView.layer.borderColor = UIColor.white.withAlphaComponent(0.08).cgColor
+        view.addSubview(stageView)
+
+        photoView.contentMode = .scaleToFill
+        photoView.isUserInteractionEnabled = false
+        photoView.isHidden = true
+        stageView.addSubview(photoView)
+
+        overlayView.image = overlayImage
+        overlayView.contentMode = .scaleToFill
+        overlayView.isUserInteractionEnabled = false
+        stageView.addSubview(overlayView)
+
+        emptyIcon.image = UIImage(systemName: "photo.on.rectangle.angled", withConfiguration: UIImage.SymbolConfiguration(pointSize: 52, weight: .light))
+        emptyIcon.tintColor = UIColor.white.withAlphaComponent(0.25)
+        emptyIcon.contentMode = .center
+        stageView.addSubview(emptyIcon)
+        emptyLabel.text = "まずは写真を選んでください"
+        emptyLabel.textColor = UIColor.white.withAlphaComponent(0.5)
+        emptyLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        emptyLabel.textAlignment = .center
+        stageView.addSubview(emptyLabel)
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.delegate = self
+        stageView.addGestureRecognizer(pan)
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+        pinch.delegate = self
+        stageView.addGestureRecognizer(pinch)
+
+        hintLabel.textColor = UIColor.white.withAlphaComponent(0.55)
+        hintLabel.font = .systemFont(ofSize: 12)
+        hintLabel.textAlignment = .center
+        view.addSubview(hintLabel)
+
+        // 写真が無いときの入口ボタン
+        cameraSourceButton = makeSourceButton(symbol: "camera.fill", title: "写真を撮影", filled: true, action: #selector(openCameraTapped))
+        albumSourceButton = makeSourceButton(symbol: "photo.on.rectangle", title: "アルバムから選ぶ", filled: false, action: #selector(openPickerTapped))
+        view.addSubview(cameraSourceButton)
+        view.addSubview(albumSourceButton)
+
+        // 写真があるときの下部ツールバー
+        actionBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+        changeButton = makeToolButton(symbol: "photo.on.rectangle", title: "写真を変更", action: #selector(openPickerTapped))
+        retakeButton = makeToolButton(symbol: "camera", title: "撮り直す", action: #selector(openCameraTapped))
+        saveButton = makeToolButton(symbol: "square.and.arrow.down", title: "保存", action: #selector(saveTapped))
+        shareButton = makeToolButton(symbol: "square.and.arrow.up", title: "共有する", action: #selector(shareTapped), emphasized: true)
+        actionBar.contentView.addSubview(changeButton)
+        actionBar.contentView.addSubview(retakeButton)
+        actionBar.contentView.addSubview(saveButton)
+        actionBar.contentView.addSubview(shareButton)
+        view.addSubview(actionBar)
+    }
+
+    private func makeSourceButton(symbol: String, title: String, filled: Bool, action: Selector) -> UIButton {
+        var config = UIButton.Configuration.filled()
+        config.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .bold))
+        config.title = title
+        config.imagePadding = 8
+        config.cornerStyle = .medium
+        config.baseBackgroundColor = filled ? .systemBlue : UIColor.white.withAlphaComponent(0.14)
+        config.baseForegroundColor = .white
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 15, weight: .bold)
+            return outgoing
+        }
+        let b = UIButton(configuration: config)
+        b.addTarget(self, action: action, for: .touchUpInside)
+        return b
+    }
+
+    private func makeToolButton(symbol: String, title: String, action: Selector, emphasized: Bool = false) -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold))
+        config.title = title
+        config.imagePlacement = .top
+        config.imagePadding = 4
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 11, weight: .semibold)
+            return outgoing
+        }
+        let b = UIButton(configuration: config)
+        b.tintColor = emphasized ? .systemBlue : .white
+        b.addTarget(self, action: action, for: .touchUpInside)
+        return b
+    }
+
+    private func layoutAll() {
+        let bounds = view.bounds
+        let safeTop = view.safeAreaInsets.top
+        let safeBottom = view.safeAreaInsets.bottom
+        let topH = safeTop + 60
+        let bottomH = safeBottom + 118
+        let availH = bounds.height - topH - bottomH
+        let stageW = max(200, min(bounds.width - 32, availH * 9 / 16, 430))
+        let stageH = stageW * 16 / 9
+        let stageX = (bounds.width - stageW) / 2
+        let stageY = topH + max(0, (availH - stageH) / 2)
+        stageView.frame = CGRect(x: stageX, y: stageY, width: stageW, height: stageH)
+        overlayView.frame = stageView.bounds
+        emptyIcon.frame = CGRect(x: (stageW - 72) / 2, y: stageH / 2 - 62, width: 72, height: 56)
+        emptyLabel.frame = CGRect(x: 16, y: stageH / 2 + 2, width: stageW - 32, height: 20)
+        updatePhotoFrame()
+
+        titleLabel.frame = CGRect(x: 64, y: safeTop + 10, width: bounds.width - 128, height: 38)
+        closeButton.frame = CGRect(x: 16, y: safeTop + 10, width: 38, height: 38)
+
+        hintLabel.frame = CGRect(x: 16, y: stageY + stageH + 10, width: bounds.width - 32, height: 18)
+
+        let barY = bounds.height - safeBottom - 60
+        let halfW = (stageW - 10) / 2
+        cameraSourceButton.frame = CGRect(x: stageX, y: barY, width: halfW, height: 52)
+        albumSourceButton.frame = CGRect(x: stageX + halfW + 10, y: barY, width: halfW, height: 52)
+
+        let actionH: CGFloat = 74 + safeBottom
+        actionBar.frame = CGRect(x: 0, y: bounds.height - actionH, width: bounds.width, height: actionH)
+        let itemW = bounds.width / 4
+        changeButton.frame = CGRect(x: 0, y: 4, width: itemW, height: 64)
+        retakeButton.frame = CGRect(x: itemW, y: 4, width: itemW, height: 64)
+        saveButton.frame = CGRect(x: itemW * 2, y: 4, width: itemW, height: 64)
+        shareButton.frame = CGRect(x: itemW * 3, y: 4, width: itemW, height: 64)
+    }
+
+    private func updateBars() {
+        let hasPhoto = photo != nil
+        cameraSourceButton.isHidden = hasPhoto
+        albumSourceButton.isHidden = hasPhoto
+        actionBar.isHidden = !hasPhoto
+        emptyIcon.isHidden = hasPhoto
+        emptyLabel.isHidden = hasPhoto
+        hintLabel.text = hasPhoto ? "ドラッグ・ピンチで写真の位置を調整できます" : ""
+    }
+
+    // MARK: 写真の位置調整（Canvas座標 1080x1920 で管理し、常に画面を覆う範囲に制限）
+    private func clamped(s: CGFloat, x: CGFloat, y: CGFloat) -> (s: CGFloat, x: CGFloat, y: CGFloat, maxX: CGFloat, maxY: CGFloat) {
+        guard let photo = photo else { return (1, 0, 0, 0, 0) }
+        let iw = photo.size.width
+        let ih = photo.size.height
+        let base = max(1080 / iw, 1920 / ih)
+        let cs = min(4, max(1, s))
+        let dw = iw * base * cs
+        let dh = ih * base * cs
+        let maxX = max(0, (dw - 1080) / 2)
+        let maxY = max(0, (dh - 1920) / 2)
+        return (cs, min(maxX, max(-maxX, x)), min(maxY, max(-maxY, y)), maxX, maxY)
+    }
+
+    private func applyView(s: CGFloat, x: CGFloat, y: CGFloat) {
+        let c = clamped(s: s, x: x, y: y)
+        viewS = c.s
+        viewX = c.x
+        viewY = c.y
+        updatePhotoFrame()
+        let st = (
+            x: c.maxX > 0 && abs(abs(c.x) - c.maxX) < 1,
+            y: c.maxY > 0 && abs(abs(c.y) - c.maxY) < 1,
+            sMax: c.s >= 4,
+            fit: c.s == 1 && c.x == 0 && c.y == 0
+        )
+        let hitEdge = (st.x && !edgeState.x) || (st.y && !edgeState.y) || (st.sMax && !edgeState.sMax)
+        let hitFit = st.fit && !edgeState.fit
+        let now = Date().timeIntervalSince1970
+        if (hitEdge || hitFit) && now - lastHapticAt > 0.09 {
+            if hitFit {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            } else {
+                edgeFeedback.selectionChanged()
+            }
+            lastHapticAt = now
+        }
+        edgeState = st
+    }
+
+    private func updatePhotoFrame() {
+        guard let photo = photo else { return }
+        let iw = photo.size.width
+        let ih = photo.size.height
+        let base = max(1080 / iw, 1920 / ih)
+        let dw = iw * base * viewS
+        let dh = ih * base * viewS
+        let k = stageView.bounds.width / 1080
+        photoView.frame = CGRect(
+            x: ((1080 - dw) / 2 + viewX) * k,
+            y: ((1920 - dh) / 2 + viewY) * k,
+            width: dw * k,
+            height: dh * k
+        )
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        guard photo != nil, gesture.state == .changed else { return }
+        let t = gesture.translation(in: stageView)
+        gesture.setTranslation(.zero, in: stageView)
+        let k = 1080 / max(1, stageView.bounds.width)
+        applyView(s: viewS, x: viewX + t.x * k, y: viewY + t.y * k)
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard photo != nil, gesture.state == .changed else { return }
+        let ns = viewS * gesture.scale
+        gesture.scale = 1
+        applyView(s: ns, x: viewX, y: viewY)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
+    }
+
+    // MARK: 写真の取り込み
+    private func setPhoto(_ image: UIImage) {
+        photo = image
+        photoView.image = image
+        photoView.isHidden = false
+        edgeState = (x: false, y: false, sMax: false, fit: true)
+        applyView(s: 1, x: 0, y: 0)
+        updateBars()
+    }
+
+    @objc private func openCameraTapped() { openCamera() }
+    @objc private func openPickerTapped() { openPicker() }
+
+    private func openCamera() {
+        let vc = ShareCameraViewController()
+        vc.overlayImage = overlayImage
+        vc.modalPresentationStyle = .fullScreen
+        vc.onCapturedImage = { [weak self] image in
+            self?.setPhoto(image)
+        }
+        vc.onError = { [weak self] message in
+            self?.showNotice(message)
+        }
+        present(vc, animated: true)
+    }
+
+    private func openPicker() {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let provider = results.first?.itemProvider,
+              provider.canLoadObject(ofClass: UIImage.self) else { return }
+        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+            if let image = object as? UIImage {
+                DispatchQueue.main.async { self?.setPhoto(image) }
+            }
+        }
+    }
+
+    // MARK: 合成・保存・共有
+    private func renderFinal() -> UIImage? {
+        guard let overlay = overlayImage else { return nil }
+        let size = CGSize(width: 1080, height: 1920)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            UIColor.black.setFill()
+            UIRectFill(CGRect(origin: .zero, size: size))
+            if let photo = photo {
+                let iw = photo.size.width
+                let ih = photo.size.height
+                let base = max(1080 / iw, 1920 / ih)
+                let dw = iw * base * viewS
+                let dh = ih * base * viewS
+                photo.draw(in: CGRect(x: (1080 - dw) / 2 + viewX, y: (1920 - dh) / 2 + viewY, width: dw, height: dh))
+            }
+            overlay.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    @objc private func shareTapped() {
+        guard let image = renderFinal() else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let avc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        avc.popoverPresentationController?.sourceView = stageView
+        avc.popoverPresentationController?.sourceRect = stageView.bounds
+        present(avc, animated: true)
+    }
+
+    @objc private func saveTapped() {
+        guard !saving, let image = renderFinal() else { return }
+        saving = true
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+            guard let self = self else { return }
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async {
+                    self.saving = false
+                    self.showNotice("保存できませんでした。設定アプリで写真への保存を許可してください。")
+                }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
+            }) { success, _ in
+                DispatchQueue.main.async {
+                    self.saving = false
+                    if success {
+                        self.flashSaved()
+                    } else {
+                        self.showNotice("保存に失敗しました。")
+                    }
+                }
+            }
+        }
+    }
+
+    private func flashSaved() {
+        var config = saveButton.configuration
+        config?.title = "保存しました"
+        config?.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .bold))
+        saveButton.configuration = config
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else { return }
+            var back = self.saveButton.configuration
+            back?.title = "保存"
+            back?.image = UIImage(systemName: "square.and.arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold))
+            self.saveButton.configuration = back
+        }
+    }
+
+    private func showNotice(_ message: String) {
+        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: true)
     }
 }

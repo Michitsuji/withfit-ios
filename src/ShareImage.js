@@ -375,6 +375,31 @@ function drawShareCard(ctx, img, view, model, opts = {}) {
   ctx.shadowOffsetY = 0;
 }
 
+// ---- ネイティブ編集画面（全面Swift）への入口 ----
+// 記録の描画だけを透明PNG（オーバーレイ）にしてSwiftへ渡し、写真の選択・
+// 位置調整・合成・保存・共有はすべてSwift側の編集画面で行う。
+export async function openShareEditorNative(post, autoOpen = 'none') {
+  try {
+    const model = buildShareModel(post);
+    const oc = document.createElement('canvas');
+    oc.width = CW;
+    oc.height = CH;
+    drawShareCard(oc.getContext('2d'), null, { s: 1, x: 0, y: 0 }, model, { transparent: true });
+    const blob = await new Promise((res) => oc.toBlob(res, 'image/png'));
+    if (!blob) return;
+    const base64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+    if (!base64) return;
+    postNativeMessage({ type: 'OPEN_SHARE_EDITOR', overlay: base64, autoOpen });
+  } catch (e) {
+    // 失敗時は無言で戻る（入口ボタンの連打で再試行できる）
+  }
+}
+
 // ---- モーダル ----
 // 撮影はネイティブカメラ（Swift側）に任せる。WebView内の getUserMedia は
 // v47以降の共有フリーズの温床になったため撤去した。

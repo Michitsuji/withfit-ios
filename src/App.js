@@ -12,7 +12,7 @@ import { generateId, generateFriendCode, calculateWorkoutTotals, getRelativeTime
 import { useAutoScrollDisable, WithFitLogo, UserAvatar, renderUsernameWithBadge, TimerDisplay, LiquidGlassTabBar } from './CommonUI';
 import { TimelineView, WorkoutCard } from './WorkoutCard';
 import { EditWorkoutModal } from './WorkoutForm';
-import { ShareImageModal } from './ShareImage';
+import { ShareImageModal, openShareEditorNative } from './ShareImage';
 import { DataView } from './DataView';
 import { RecordView } from './RecordView';
 import { ExercisesView } from './ExercisesView';
@@ -1944,7 +1944,12 @@ export default function App() {
   };
 
   const handleShareImage = (post) => {
-    setShareTarget({ post, autoPick: null });
+    // ネイティブアプリでは全面Swiftの編集画面を開く（Webモーダルは使わない）
+    if (isNativeIosApp()) {
+      openShareEditorNative(post, 'none');
+    } else {
+      setShareTarget({ post, autoPick: null });
+    }
   };
 
   const handleUpdateWorkout = async (postId, updatedData) => {
@@ -3257,8 +3262,8 @@ export default function App() {
             <div className="text-lg font-bold text-slate-800 dark:text-slate-100 mb-1">投稿が完了しました 🎉</div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">写真に記録を重ねたシェア画像を作りますか？</p>
             <div className="space-y-2.5">
-              <button onClick={() => { setShareTarget({ post: sharePrompt, autoPick: 'camera' }); setSharePrompt(null); }} className="w-full bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">📸 写真を撮影</button>
-              <button onClick={() => { setShareTarget({ post: sharePrompt, autoPick: 'album' }); setSharePrompt(null); }} className="w-full bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">🖼 アルバムから選ぶ</button>
+              <button onClick={() => { if (isNativeIosApp()) { openShareEditorNative(sharePrompt, 'camera'); } else { setShareTarget({ post: sharePrompt, autoPick: 'camera' }); } setSharePrompt(null); }} className="w-full bg-blue-600 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">📸 写真を撮影</button>
+              <button onClick={() => { if (isNativeIosApp()) { openShareEditorNative(sharePrompt, 'album'); } else { setShareTarget({ post: sharePrompt, autoPick: 'album' }); } setSharePrompt(null); }} className="w-full bg-slate-700 text-white font-bold rounded-xl py-3 active:scale-[0.98] transition-transform">🖼 アルバムから選ぶ</button>
               <button onClick={() => setSharePrompt(null)} className="w-full text-slate-500 dark:text-slate-400 font-bold rounded-xl py-2.5">後で</button>
             </div>
           </div>
