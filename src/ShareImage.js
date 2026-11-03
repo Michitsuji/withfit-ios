@@ -90,17 +90,21 @@ export function buildShareModel(post) {
   const dt = new Date(post.timestamp || post.date || Date.now());
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dateText = `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, '0')}.${String(dt.getDate()).padStart(2, '0')} ${days[dt.getDay()]}`;
-  // 部位は全カテゴリが対象（腹筋・有酸素なども含む）、セット数が多い順
-  // （同数なら登場順）に「胸・背中・腕トレ」形式で
+  // 部位は全カテゴリが対象（腹筋なども含む）、セット数が多い順
+  // （同数なら登場順）に「胸・背中・腕トレ」形式で。
+  // ただし有酸素は部位表示に含めず、表示は上位3つまで。
   const catSets = {};
   items.forEach((i) => {
     if (i.category) {
       catSets[i.category] = (catSets[i.category] || 0) + (i.sets?.length || 0);
     }
   });
-  const orderedCats = Object.keys(catSets).sort((a, b) =>
-    (catSets[b] - catSets[a]) ||
-    (items.findIndex((i) => i.category === a) - items.findIndex((i) => i.category === b)));
+  const orderedCats = Object.keys(catSets)
+    .filter((c) => c !== '有酸素')
+    .sort((a, b) =>
+      (catSets[b] - catSets[a]) ||
+      (items.findIndex((i) => i.category === a) - items.findIndex((i) => i.category === b)))
+    .slice(0, 3);
   const titlePart = orderedCats.length ? `${orderedCats.join('・')}トレ` : '';
   const header = [dateText, post.gymName || '', titlePart].filter(Boolean).join(' / ');
 
