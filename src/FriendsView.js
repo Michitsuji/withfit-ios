@@ -26,7 +26,7 @@ const localStorageBytes = () => {
   } catch (e) { return 0; }
 };
 
-function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accountsInfo, onUserClick, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush }) {
+function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accountsInfo, onUserClick, onSendRequest, onAccept, onReject, onRemoveFriend, onSendPartnerRequest, onAcceptPartnerRequest, onRejectPartnerRequest, onRemovePartner, onFriendClick, onGenerateFriendCode, posts, targetFriendTab, setTargetFriendTab, onImport, onImportItem, onSendTestPush, onBroadcastTestPush, onFetchPushStats }) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [reportsCount, setReportsCount] = useState(0);
 
@@ -72,6 +72,15 @@ function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accoun
   const [testPushTarget, setTestPushTarget] = useState(currentUser || '');
   const [testPushMessage, setTestPushMessage] = useState('');
   const [isSendingTestPush, setIsSendingTestPush] = useState(false);
+  const [pushStats, setPushStats] = useState(null);
+
+  // マスター用：全ユーザーのプッシュ登録台数をサーバーから取得する（他人の分は金庫にあり直接読めないため）
+  useEffect(() => {
+    if (currentUser !== MASTER_USER || !onFetchPushStats) return;
+    let cancelled = false;
+    onFetchPushStats().then((counts) => { if (!cancelled && counts) setPushStats(counts); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentUser, onFetchPushStats]);
 
   const handlePartnerSearchSubmit = (e) => {
     e.preventDefault();
@@ -136,6 +145,8 @@ function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accoun
   };
 
   const myFriends = myInfo.friends || [];
+  // マスター用テスト送信の送信先はフレンドに限らず全アカウント
+  const allUsernames = [currentUser, ...Object.keys(accountsInfo || {}).filter(u => u !== currentUser).sort()];
 
   let partnerPosts = [];
   let totalMonthVolume = 0;
@@ -393,12 +404,15 @@ function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accoun
                       className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-slate-100 font-bold focus:outline-none focus:border-amber-500 text-sm"
                     >
                       <option value="" disabled>送信先を選択</option>
-                      {[currentUser, ...myFriends].map(f => {
+                      <option value="__ALL__">全員に送信（{allUsernames.length}人）</option>
+                      {allUsernames.map(f => {
                         const acc = accountsInfo[f];
-                        const tCount = Array.isArray(acc?.fcmTokens) ? acc.fcmTokens.length : (acc?.fcmToken ? 1 : 0);
+                        const statCount = pushStats ? (pushStats[f] || 0) : null;
+                        const fallbackCount = Array.isArray(acc?.fcmTokens) ? acc.fcmTokens.length : (acc?.fcmToken ? 1 : 0);
+                        const tCount = statCount !== null ? statCount : fallbackCount;
                         return (
                           <option key={f} value={f}>
-                            {acc?.displayName || f}{f === currentUser ? ` (自分) — ${tCount > 0 ? `Push登録:${tCount}台` : 'アプリ内通知のみ'}` : ''}
+                            {acc?.displayName || f}{f === currentUser ? ' (自分)' : ''} — Push登録:{tCount}台
                           </option>
                         );
                       })}
@@ -414,9 +428,29 @@ function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accoun
                       className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-slate-100 font-bold focus:outline-none focus:border-amber-500 text-sm"
                     />
                   </div>
-                  <button 
+                  <button
                     onClick={async () => {
-                      if (!onSendTestPush || isSendingTestPush) return;
+                      if (isSendingTestPush) return;
+                      if (testPushTarget === '__ALL__') {
+                        if (!onBroadcastTestPush) return;
+                        if (!window.confirm(`全員（${allUsernames.length}人）に通知を送信します。よろしいですか？`)) return;
+                        setIsSendingTestPush(true);
+                        try {
+                          const results = await onBroadcastTestPush(testPushMessage);
+                          const nameOf = (u) => accountsInfo[u]?.displayName || u;
+                          const pushOk = results.filter(r => r.res?.pushSuccess).map(r => nameOf(r.user));
+                          const inAppOnly = results.filter(r => !r.res?.pushSuccess && r.res?.inAppSuccess).map(r => nameOf(r.user));
+                          const failed = results.filter(r => !r.res?.inAppSuccess).map(r => nameOf(r.user));
+                          let msg = `全員（${results.length}人）への送信が完了しました。\nプッシュ送信: ${pushOk.length}人${pushOk.length ? `（${pushOk.join('、')}）` : ''}\nアプリ内のみ: ${inAppOnly.length}人${inAppOnly.length ? `（${inAppOnly.join('、')}）` : ''}`;
+                          if (failed.length) msg += `\n送信失敗: ${failed.length}人（${failed.join('、')}）`;
+                          alert(msg);
+                          setTestPushMessage('');
+                        } finally {
+                          setIsSendingTestPush(false);
+                        }
+                        return;
+                      }
+                      if (!onSendTestPush) return;
                       setIsSendingTestPush(true);
                       try {
                         await onSendTestPush(testPushTarget, testPushMessage);
@@ -429,7 +463,7 @@ function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accoun
                     className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl text-sm shadow-md transition-colors disabled:opacity-50 flex justify-center items-center gap-2"
                   >
                     {isSendingTestPush ? <Activity size={16} className="animate-spin" /> : <Bell size={16} />}
-                    通知を送信する（アプリ内＋Push）
+                    {testPushTarget === '__ALL__' ? '全員に通知を送信する（アプリ内＋Push）' : '通知を送信する（アプリ内＋Push）'}
                   </button>
                 </div>
               </div>

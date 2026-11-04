@@ -805,6 +805,29 @@ export default function App() {
     return { inAppSuccess, pushSuccess, tokenCount: pushTokenCount, pushDetails };
   }, [accountsInfo, currentUser]);
 
+  // マスター用テスト送信（結果だけを返す。結果の表示は呼び出し側で行う）
+  const handleSendTestPushQuiet = useCallback(async (targetUser, message) => {
+    if (!db || !targetUser || !message) return { inAppSuccess: false, pushSuccess: false, tokenCount: 0, pushDetails: [] };
+    return sendNotification(targetUser, '📣 管理者からのメッセージ', message, 'general', null, { allowSelf: true });
+  }, [db, sendNotification]);
+
+  // マスター用：全ユーザーのプッシュ登録台数（件数のみ）をサーバーから取得する。
+  // 他人のトークンは金庫にありクライアントからは読めないため、サーバーで数える
+  const fetchPushStats = useCallback(async () => {
+    try {
+      const idToken = auth && auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (!idToken) return null;
+      const res = await fetch(getApiUrl('/api/pushStats'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({})
+      });
+      if (!res.ok) return null;
+      const j = await res.json().catch(() => null);
+      return (j && j.counts) ? j.counts : null;
+    } catch (e) { return null; }
+  }, []);
+
   // コンテンツ通報（ガイドライン1.2対応）: 投稿・コメントを運営（マスター）へ報告する
   const handleReportContent = async ({ targetType, targetId, postId = null, reportedUser, snapshotText = '' }) => {
     if (!currentUser || !db || !reportedUser) return;
@@ -3383,14 +3406,7 @@ export default function App() {
         {currentTab === 'data' && <DataView posts={posts} currentUser={currentUser} accountsInfo={accountsInfo} onEdit={setEditingPost} onDelete={handleDeleteWorkout} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} onToggleCommentLike={handleToggleCommentLike} onUserClick={setSelectedUserProfile} />}
         {currentTab === 'friends' && <FriendsView currentUser={currentUser} myInfo={myInfo} friendCode={myFriendCode} friendCodeLoaded={privateLoaded} accountsInfo={accountsInfo} onSendRequest={handleSendFriendRequest} onAccept={handleAcceptFriendRequest} onReject={handleRejectFriendRequest} onRemoveFriend={handleRemoveFriend} onSendPartnerRequest={handleSendPartnerRequest} onAcceptPartnerRequest={handleAcceptPartnerRequest} onRejectPartnerRequest={handleRejectPartnerRequest} onRemovePartner={handleRemovePartner} onFriendClick={(u) => setSelectedFriendUser(u)} onUserClick={setSelectedUserProfile} onGenerateFriendCode={handleGenerateFriendCode} posts={posts} targetFriendTab={targetFriendTab} setTargetFriendTab={setTargetFriendTab} onImport={handleImportWorkout} onImportItem={handleImportExerciseItem} onSendTestPush={async (targetUser, message) => {
           if (!db || !targetUser || !message) return;
-          const res = await sendNotification(
-            targetUser,
-            '📣 管理者からのメッセージ',
-            message,
-            'general',
-            null,
-            { allowSelf: true }
-          );
+          const res = await handleSendTestPushQuiet(targetUser, message);
           if (res.pushSuccess) {
             alert(`${accountsInfo[targetUser]?.displayName || targetUser}さんへプッシュ通知とアプリ内通知を送信しました！`);
           } else if (res.inAppSuccess) {
@@ -3399,7 +3415,16 @@ export default function App() {
           } else {
             alert('通知の送信に失敗しました。');
           }
-        }} />}
+        }} onBroadcastTestPush={async (message) => {
+          if (!db || !message) return [];
+          const targets = Object.keys(accountsInfo || {});
+          const results = [];
+          for (const t of targets) {
+            const res = await handleSendTestPushQuiet(t, message);
+            results.push({ user: t, res });
+          }
+          return results;
+        }} onFetchPushStats={fetchPushStats} />}
       </main>
 
       {editingPost && <EditWorkoutModal post={editingPost} gyms={allGyms} exercises={exercises} onClose={() => setEditingPost(null)} onSave={handleUpdateWorkout} myPastPosts={posts.filter(p => p.author === currentUser)} />}
