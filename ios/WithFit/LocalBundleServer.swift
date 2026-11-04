@@ -134,6 +134,18 @@ final class LocalBundleServer {
         return 0
     }
 
+    private func parseHeaderValue(from headers: String, name: String) -> String? {
+        let target = name.lowercased() + ":"
+        for line in headers.components(separatedBy: "\r\n") {
+            let lower = line.lowercased()
+            if lower.hasPrefix(target) {
+                let val = line.dropFirst(target.count).trimmingCharacters(in: .whitespaces)
+                if !val.isEmpty { return val }
+            }
+        }
+        return nil
+    }
+
     private func processHTTPRequest(headerString: String, bodyData: Data, connection: NWConnection) {
         let lines = headerString.components(separatedBy: "\r\n")
         guard let requestLine = lines.first else {
@@ -155,7 +167,10 @@ final class LocalBundleServer {
         }
 
         if pathOnly.hasPrefix("/api/") {
-            proxyAPIRequest(method: method, path: rawPath, bodyData: bodyData, connection: connection)
+            // 認証ヘッダーを落とすと、サーバー側で本人確認ができず
+            // プッシュ送信などの認証必須APIが全て失敗するため、必ず転送する
+            let authorization = parseHeaderValue(from: headerString, name: "Authorization")
+            proxyAPIRequest(method: method, path: rawPath, bodyData: bodyData, authorization: authorization, connection: connection)
             return
         }
 
@@ -193,7 +208,7 @@ final class LocalBundleServer {
         }
     }
 
-    private func proxyAPIRequest(method: String, path: String, bodyData: Data, connection: NWConnection) {
+    private func proxyAPIRequest(method: String, path: String, bodyData: Data, authorization: String?, connection: NWConnection) {
         guard let targetURL = URL(string: "\(backendBaseURL)\(path)") else {
             let errJSON = Data("{\"error\":\"Invalid backend URL\"}".utf8)
             sendResponse(connection: connection, status: "500 Internal Server Error", contentType: "application/json", body: errJSON, isStaticAsset: false)
@@ -203,6 +218,9 @@ final class LocalBundleServer {
         var request = URLRequest(url: targetURL)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let authorization = authorization, !authorization.isEmpty {
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        }
         if !bodyData.isEmpty && (method == "POST" || method == "PUT") {
             request.httpBody = bodyData
         }
