@@ -405,7 +405,7 @@ function FriendsView({ currentUser, myInfo, friendCode, friendCodeLoaded, accoun
                     >
                       <option value="" disabled>送信先を選択</option>
                       <option value="__ALL__">全員に送信（{allUsernames.length}人）</option>
-                      {allUsernames.map(f => {
+                      {[currentUser, ...myFriends].map(f => {
                         const acc = accountsInfo[f];
                         const statCount = pushStats ? (pushStats[f] || 0) : null;
                         const fallbackCount = Array.isArray(acc?.fcmTokens) ? acc.fcmTokens.length : (acc?.fcmToken ? 1 : 0);
