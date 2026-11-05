@@ -238,6 +238,8 @@ export default function App() {
   const removeDeviceTokenFromUserAccount = useCallback(async (username) => {
     if (!username || !db) return;
     const localToken = typeof window !== 'undefined' ? localStorage.getItem(DEVICE_TOKEN_STORAGE_KEY) : deviceFcmToken;
+    // 自端末のトークンを特定できない場合はDBに触らない（他端末の登録まで消してしまう事故の防止）
+    if (!localToken) return;
     try {
       // 保存先（privateAccounts）と移行元の accounts の両方から、この端末のトークンを除去する
       for (const collName of ['privateAccounts', 'accounts']) {
@@ -1965,15 +1967,19 @@ export default function App() {
     // これをしないと残った認証セッションから自動で再ログインしてしまう
     suppressAutoLoginRef.current = true;
     if (currentUser && db) {
-      // ログアウト前の後片付け（トークン除去・オフライン化）。
-      // ネットワーク不調で固まって「ログアウトできない」状態にならないよう、
-      // 最大3秒で見切って必ずサインアウトまで進める。
-      const preSignOut = (async () => {
+      // トークン除去はサインアウト「前」に完了させる。
+      // 以前は後片付け全体を3秒で見切っていたため、除去の書き込みが認証切れ後に
+      // 失敗して前アカウントに端末トークンが残り、通知が届き続けることがあった。
+      // 失敗したら1回だけリトライする。
+      try {
         await removeDeviceTokenFromUserAccount(currentUser);
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { isAppOnline: false, lastActive: Date.now() }, { merge: true });
-      })();
+      } catch (e) {
+        try { await removeDeviceTokenFromUserAccount(currentUser); } catch (e2) {}
+      }
+      // オフライン化は従来どおり最大3秒で見切り、ログアウト自体は止めない。
+      const presenceOff = setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', currentUser), { isAppOnline: false, lastActive: Date.now() }, { merge: true });
       await Promise.race([
-        preSignOut.catch(() => {}),
+        presenceOff.catch(() => {}),
         new Promise((resolve) => setTimeout(resolve, 3000))
       ]);
     }
