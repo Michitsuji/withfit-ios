@@ -419,10 +419,6 @@ export default function App() {
   const [dataLoaded, setDataLoaded] = useState({ accounts: false, gyms: false, exercises: false, workouts: false });
   // ログイン処理中フラグ（ログイン画面の上にロード画面を出すため）
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  // ログイン後、初期データのサーバー同期が済んで本画面へ入ったかのラッチ
-  const [enteredApp, setEnteredApp] = useState(false);
-  // 同期が長引いた場合にロード画面で閉じ込めないためのフォールバック
-  const [gateTimedOut, setGateTimedOut] = useState(false);
   // 各コレクションが「サーバーで確認済みの最新状態」を1回でも返したかどうか（キャッシュ由来は除く）
   const [serverSynced, setServerSynced] = useState({ accounts: false, gyms: false, exercises: false, workouts: false });
   const serverChunksRef = useRef(new Set());
@@ -999,24 +995,6 @@ export default function App() {
     if (allServerSynced && isDraftLoaded) notifyAppReady();
   }, [isSessionChecked, currentUser, allServerSynced, isDraftLoaded, isFullyLoaded]);
 
-  // ログイン直後は、初期データのサーバー同期が済むまでロード画面を出し、
-  // 同期完了後に本画面へ入る（ログインできたか分からない状態をなくす）。
-  useEffect(() => {
-    if (currentUser && allServerSynced && isDraftLoaded) setEnteredApp(true);
-  }, [currentUser, allServerSynced, isDraftLoaded]);
-  // ログアウトしたらラッチを戻し、次回ログインでもロード画面を出す。
-  useEffect(() => {
-    if (!currentUser) {
-      setEnteredApp(false);
-      setGateTimedOut(false);
-    }
-  }, [currentUser]);
-  // 同期が長引く場合はロード画面で閉じ込めない（12秒で本画面へ通す）。
-  useEffect(() => {
-    if (!currentUser || enteredApp) return;
-    const t = setTimeout(() => setGateTimedOut(true), 12000);
-    return () => clearTimeout(t);
-  }, [currentUser, enteredApp]);
   // 起動直後に、キャッシュの有無とデータ件数から所要時間を概算し、明らかに長く
   // なりそうな場合だけ「進捗バーを最初から表示する」ようネイティブへ伝える
   const loadEstimateSentRef = useRef(false);
@@ -2996,19 +2974,6 @@ export default function App() {
           </div>
         )}
       </>
-    );
-  }
-
-  // ログイン直後：初期データの読み込みが終わるまではロード画面を表示し、
-  // 読み込み完了後にアプリの画面へ入る。
-  if (!enteredApp && !gateTimedOut) {
-    return (
-      <div className="fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-white">
-        <WithFitLogo size={64} className="text-slate-700" />
-        <div className="mt-3 text-2xl font-bold tracking-wide text-slate-800">WithFit</div>
-        <div className="mt-8 h-8 w-8 animate-spin rounded-full border-[3px] border-slate-200 border-t-slate-600" />
-        <div className="mt-4 text-sm text-slate-500">データを読み込み中…</div>
-      </div>
     );
   }
 
