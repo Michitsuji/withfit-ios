@@ -1684,7 +1684,6 @@ export default function App() {
       const docSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
       if (docSnap.exists()) accountData = docSnap.data();
     } catch(e) { return false; }
-    const joinedGyms = accountData?.joinedGyms || ['common'];
     // かつて存在した「PIN欄に google と入れるとユーザー名だけで入れる」分岐は
     // なりすましに使えるため廃止した。存在しないアカウントではログインできない
     if (!accountData) {
@@ -1703,7 +1702,7 @@ export default function App() {
             await signInWithCustomToken(auth, j.token);
             setCurrentUser(username);
             try { localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() })); } catch (e) {}
-            try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true }); } catch (e) {}
+            try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true }, { merge: true }); } catch (e) {}
             return true;
           }
           return false;
@@ -1715,7 +1714,7 @@ export default function App() {
       } else if (accountData.pin === pin) {
         setCurrentUser(username);
         try { localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() })); } catch (e) {}
-        try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true }); } catch (e) {}
+        try { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true }, { merge: true }); } catch (e) {}
       } else { return false; }
     }
     return true;
@@ -1767,15 +1766,14 @@ export default function App() {
       // 解決できない場合は推測でアカウントを作らない（誤った新規登録・別アカウント誤認を防ぐ）
       if (!username) return false;
       // uidMap を先に用意してから（ルールの本人判定で参照される）プロフィールを更新する
+      // ※ログイン時は joinedGyms を書き戻さない（古い読み取り値で登録ジムが巻き戻る事故があったため）
       try {
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'uidMap', googleUser.uid), { username }, { merge: true });
       } catch (e) {}
       setCurrentUser(username);
       localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
       try {
-        const accSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username));
-        const joinedGyms = (accSnap.exists() ? accSnap.data()?.joinedGyms : null) || ['common'];
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true }, { merge: true });
       } catch (e) {}
       return true;
     } catch (e) { return false; }
@@ -1862,8 +1860,7 @@ export default function App() {
         const username = snap.docs[0].id;
         setCurrentUser(username);
         localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
-        const joinedGyms = snap.docs[0].data()?.joinedGyms || ['common'];
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true }, { merge: true });
         return true;
       }
 
@@ -1873,8 +1870,7 @@ export default function App() {
         const username = baseName;
         setCurrentUser(username);
         localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
-        const joinedGyms = docSnap.data()?.joinedGyms || ['common'];
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { appleUid: appleUser.uid, lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { appleUid: appleUser.uid, lastActive: Date.now(), isAppOnline: true }, { merge: true });
         const privRef = doc(db, 'artifacts', appId, 'public', 'data', 'privateAccounts', username);
         const privSnap = await getDoc(privRef).catch(() => null);
         if (privSnap && privSnap.exists()) {
@@ -1961,8 +1957,7 @@ export default function App() {
           const username = snap.docs[0].id;
           setCurrentUser(username);
           localStorage.setItem('withfit_login_session', JSON.stringify({ userId: username, lastActive: Date.now() }));
-          const joinedGyms = userData.joinedGyms || ['common'];
-          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true, joinedGyms }, { merge: true });
+          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'accounts', username), { lastActive: Date.now(), isAppOnline: true }, { merge: true });
           return true;
         }
       }
