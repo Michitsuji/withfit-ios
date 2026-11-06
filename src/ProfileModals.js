@@ -5,6 +5,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { X, Activity, PlusCircle, Trash2, Settings, Sun, Sparkles, AlertTriangle, Users, UserPlus, ChevronLeft, Bell, CheckCircle, RefreshCw, Send } from 'lucide-react';
 import { GoogleAuthProvider, signInWithRedirect, getAuth, signInWithPopup } from 'firebase/auth';
 import { UserAvatar, ToggleSwitch, WithFitLogo } from './CommonUI';
+import { isNativeIosApp, postNativeMessage } from './nativeBridge';
 
 // --- プロフィール設定モーダル ---
 function ProfileModal({
@@ -659,7 +660,12 @@ function LoginScreen({ onLogin, onGoogleLogin, onAppleLogin, onSecretLogin, isOn
                <button 
                  type="button"
                  disabled={!agreed}
-                 onClick={async () => { 
+                 onClick={async () => {
+                   if (isNativeIosApp()) {
+                     // ネイティブ版はOS標準のサインイン画面（パスキー対応）を使うためシェルに委譲する
+                     postNativeMessage({ type: 'REQUEST_GOOGLE_LOGIN' });
+                     return;
+                   }
                    const isWebView = typeof window !== 'undefined' && window.ReactNativeWebView && !window.WithFitNative;
                    if (isWebView) {
                      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'REQUEST_GOOGLE_LOGIN' }));

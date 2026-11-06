@@ -296,5 +296,18 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>GoogleSignIn</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.949622687026-rhukdbu9amdohutfkb0hqo5e3ku24h53</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

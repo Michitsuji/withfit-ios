@@ -14,6 +14,9 @@ packages:
   GoogleMobileAds:
     url: https://github.com/googleads/swift-package-manager-google-mobile-ads.git
     from: 13.0.0
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS.git
+    from: 8.0.0
 targets:
   WithFit:
     type: application
@@ -41,6 +44,7 @@ targets:
       - target: WithFitLiveActivity
         embed: true
       - package: GoogleMobileAds
+      - package: GoogleSignIn
   WithFitLiveActivity:
     type: app-extension
     platform: iOS

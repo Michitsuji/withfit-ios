@@ -8,6 +8,7 @@ import CoreImage
 import Photos
 import PhotosUI
 import UniformTypeIdentifiers
+import GoogleSignIn
 
 final class MainViewController: UITabBarController, UITabBarControllerDelegate, WKScriptMessageHandler, WKUIDelegate, WKNavigationDelegate {
 
@@ -346,6 +347,9 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
 
         case "APPLE_SIGN_IN":
             startAppleSignIn()
+
+        case "REQUEST_GOOGLE_LOGIN":
+            startGoogleSignIn()
 
         case "HAPTIC":
             let style = payload["style"] as? String ?? "light"
@@ -916,6 +920,22 @@ final class MainViewController: UITabBarController, UITabBarControllerDelegate, 
 
 // MARK: - Sign in with Apple
 extension MainViewController: ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    // GoogleログインはOS標準のサインイン画面（ASWebAuthenticationSession）で行う。
+    // アプリ内ブラウザ（WKWebView）ではパスキーが使えないため、公式SDK経由で標準画面に委譲する。
+    // 成功時は idToken を Web 側の NATIVE_GOOGLE_LOGIN ハンドラへ渡す（既存の受け口）。
+    private func startGoogleSignIn() {
+        let clientID = "949622687026-rhukdbu9amdohutfkb0hqo5e3ku24h53.apps.googleusercontent.com"
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+        GIDSignIn.sharedInstance.signIn(withPresenting: self) { [weak self] result, error in
+            if let error = error {
+                NSLog("[WithFit iOS] Google sign-in failed: \(error.localizedDescription)")
+                return
+            }
+            guard let idToken = result?.user.idToken?.tokenString else { return }
+            self?.sendToWeb(payload: ["type": "NATIVE_GOOGLE_LOGIN", "idToken": idToken])
+        }
+    }
+
     private func startAppleSignIn() {
         let nonce = UUID().uuidString
         appleSignInNonce = nonce
