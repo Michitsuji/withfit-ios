@@ -1742,16 +1742,25 @@ export default function App() {
         if (mapSnap.exists() && mapSnap.data().username) username = mapSnap.data().username;
       } catch (e) {}
       // 2) サーバーAPIで金庫（privateAccounts）の googleUid から解決する
+      //    コールドスタートや一時的な通信失敗で1回だけ試すと解決に失敗し、
+      //    ログイン画面に戻ってしまうため、404（未登録）以外はリトライする
       if (!username) {
         try {
           const idToken = await googleUser.getIdToken();
-          const res = await fetch(getApiUrl('/api/findUserByUid'), {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${idToken}` }
-          });
-          if (res.ok) {
-            const j = await res.json();
-            if (j && j.username) username = j.username;
+          for (let attempt = 0; attempt < 3 && !username; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1200));
+            try {
+              const res = await fetch(getApiUrl('/api/findUserByUid'), {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${idToken}` }
+              });
+              if (res.ok) {
+                const j = await res.json();
+                if (j && j.username) username = j.username;
+              } else if (res.status === 404) {
+                break; // 金庫に登録が無い場合はリトライしても変わらない
+              }
+            } catch (e) {}
           }
         } catch (e) {}
       }
