@@ -1,0 +1,70 @@
+# WithFit — Codemagic ビルド設定（CoGrit の codemagic.yaml を移植）
+# 署名とアップロードは App Store Connect 連携（名前: cogrit-asc、同じチームの連携を流用）の
+# API キーを使い、xcodebuild の -allowProvisioningUpdates で行う。
+workflows:
+  withfit-release:
+    name: WithFit Release (TestFlight)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    integrations:
+      app_store_connect: cogrit-asc
+    environment:
+      xcode: latest
+      vars:
+        DEVELOPMENT_TEAM: XW35643542
+    scripts:
+      - name: Use Node 20
+        script: |
+          if [ -s "$HOME/.nvm/nvm.sh" ]; then
+            . "$HOME/.nvm/nvm.sh"
+            nvm install 20
+            nvm use 20
+          fi
+          node -v
+          npm -v
+      - name: Install Dependencies
+        script: npm ci
+      - name: Build Web App (CRA)
+        script: npm run build
+      - name: Sync WebBundle
+        script: |
+          mkdir -p ios/WithFit/WebBundle
+          cp -R build/. ios/WithFit/WebBundle/
+          cp -f public/alarm.mp3 ios/WithFit/alarm.mp3
+      - name: Resolve App Store Connect API Key
+        script: |
+          case "$APP_STORE_CONNECT_PRIVATE_KEY" in
+            @file:*)
+              ASC_KEY_PATH="${APP_STORE_CONNECT_PRIVATE_KEY#@file:}"
+              ;;
+            *)
+              mkdir -p "$HOME/.asc"
+              printf '%b' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$HOME/.asc/AuthKey.p8"
+              ASC_KEY_PATH="$HOME/.asc/AuthKey.p8"
+              ;;
+          esac
+          echo "ASC_KEY_PATH=$ASC_KEY_PATH" >> "$CM_ENV"
+          head -1 "$ASC_KEY_PATH"
+          grep -q "BEGIN PRIVATE KEY" "$ASC_KEY_PATH"
+      - name: Archive (signed)
+        script: |
+          xcodebuild \
+            -project ios/WithFit.xcodeproj \
+            -scheme WithFit \
+            -configuration Release \
+            -archivePath "$HOME/build/WithFit.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            archive
+      - name: Export and Upload to App Store Connect
+        script: |
+          xcodebuild -exportArchive \
+            -archivePath "$HOME/build/WithFit.xcarchive" \
+            -exportOptionsPlist ios/ExportOptions.appstore.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
