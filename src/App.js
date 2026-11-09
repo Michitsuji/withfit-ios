@@ -293,6 +293,24 @@ export default function App() {
   }, []);
 
   useEffect(() => { initGlobalButtonHaptics(); }, []);
+
+  // ---- サービス終了フラグ（移行当日、サーバー側で serviceStatus/global.ended を true にすると全画面が終了告知になる） ----
+  const [serviceEnded, setServiceEnded] = useState(false);
+  const [serviceMessage, setServiceMessage] = useState('');
+  useEffect(() => {
+    if (!db) return undefined;
+    const ref = doc(db, 'artifacts', appId, 'public', 'data', 'serviceStatus', 'global');
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        const d = snap.data() || {};
+        setServiceEnded(d.ended === true);
+        setServiceMessage(typeof d.message === 'string' ? d.message : '');
+      } else {
+        setServiceEnded(false);
+      }
+    }, () => {});
+    return () => { try { unsub(); } catch (e) {} };
+  }, []);
   useEffect(() => {
     if (currentUser && pendingPushToken.current) {
       saveTokenToUserAccount(currentUser, pendingPushToken.current);
@@ -2970,6 +2988,35 @@ export default function App() {
     }
   };
 
+
+  if (serviceEnded) {
+    let myCode = '';
+    try {
+      const raw = localStorage.getItem('withfit_my_code');
+      if (raw) { const p = JSON.parse(raw); if (!currentUser || p.user === currentUser) myCode = p.code || ''; }
+    } catch (e) {}
+    return (
+      <div className="min-h-screen w-full bg-slate-50 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm bg-white p-6 rounded-3xl border border-slate-200 shadow-xl text-center">
+          <WithFitLogo size={56} className="text-slate-700 mx-auto" />
+          <h1 className="text-xl font-black text-slate-800 mt-3 mb-2">WithFitはサービスを終了しました</h1>
+          <p className="text-sm font-bold text-slate-500 leading-relaxed">
+            長らくのご利用ありがとうございました。WithFitは新アプリ「CoGrit」へ移行しました。あなたのトレーニング記録は、CoGritでそのまま引き継ぐことができます。
+          </p>
+          {serviceMessage && <p className="text-sm font-bold text-slate-600 leading-relaxed mt-3">{serviceMessage}</p>}
+          {myCode ? (
+            <div className="mt-5 bg-slate-50 border border-slate-200 rounded-2xl p-4">
+              <p className="text-xs font-bold text-slate-500 mb-1">あなたの引き継ぎ用フレンドコード</p>
+              <p className="text-2xl font-black tracking-widest text-slate-800">{myCode}</p>
+              <p className="text-[11px] font-bold text-slate-400 mt-2 leading-relaxed">CoGritの登録画面で「WithFitからデータを引き継ぐ」を選び、このコードと生年月日を入力してください。このコードは大切に保管してください。</p>
+            </div>
+          ) : (
+            <p className="text-xs font-bold text-slate-400 leading-relaxed mt-5">引き継ぎにはWithFitのフレンドコードが必要です。コードが分からない場合は、運営（cogrit.app@gmail.com）までご連絡ください。</p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     return (
